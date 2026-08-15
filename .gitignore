@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# 本地备份（历史自动备份，不入库）
+autobackup/
+
+# 环境与密钥
+.env
+.env.*
+*.local
+
+# 日志与运行产物
+logs/
+*.log

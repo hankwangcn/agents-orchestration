@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agents Orchestration — 架构总览</title>
+<style>
+  :root{
+    --ink:#0f172a; --ink2:#334155; --ink3:#64748b; --ink4:#94a3b8;
+    --line:#e2e8f0; --bg:#f1f5f9; --card:#ffffff;
+    --blue:#0284c7; --violet:#6d28d9; --teal:#0f766e; --amber:#b45309;
+    --pink:#be185d; --lime:#4d7c0f; --red:#dc2626;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink); padding:28px 20px 40px;
+  }
+  .wrap{max-width:1180px; margin:0 auto;}
+
+  /* ---------- 头部 ---------- */
+  header{
+    background:linear-gradient(135deg,#0f172a 0%,#1e293b 60%,#312e81 130%);
+    color:#fff; border-radius:16px; padding:26px 30px; margin-bottom:22px;
+    display:flex; justify-content:space-between; align-items:center; gap:24px; flex-wrap:wrap;
+    box-shadow:0 10px 30px rgba(15,23,42,.18);
+  }
+  .logo{
+    width:56px; height:56px; border-radius:14px; flex:0 0 auto;
+    background:linear-gradient(135deg,#0ea5e9,#6366f1);
+    display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:20px; letter-spacing:.5px; color:#fff;
+    box-shadow:0 6px 16px rgba(14,165,233,.35);
+  }
+  .title-row{display:flex; align-items:center; gap:16px;}
+  h1{font-size:22px; font-weight:700; letter-spacing:.3px;}
+  header p{color:#cbd5e1; font-size:12.5px; margin-top:4px;}
+  .legend{display:flex; flex-direction:column; gap:6px; font-size:11.5px; color:#e2e8f0;}
+  .legend .row{display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
+  .lg{display:inline-flex; align-items:center; gap:6px; white-space:nowrap;}
+  .lg i{display:inline-block; flex:0 0 auto;}
+  .dot{width:11px; height:11px; border-radius:3px;}
+  .arrow-svg{width:16px; height:8px;}
+  .dash-svg{width:20px; height:8px;}
+
+  /* ---------- 主体：主列 + 反馈列 ---------- */
+  main{display:flex; gap:0; align-items:stretch;}
+  .col-main{flex:1 1 auto; min-width:0;}
+  .col-fb{
+    flex:0 0 92px; margin-left:20px; position:relative; display:flex;
+    flex-direction:column; align-items:center;
+    border-left:1px dashed var(--ink4);
+  }
+  .fb-svg{width:44px; flex:1 1 auto; min-height:120px;}
+  .fb-tag{
+    writing-mode:vertical-rl; letter-spacing:4px; font-size:12px; color:#7c3aed;
+    font-weight:600; margin:6px 0 4px; white-space:nowrap;
+  }
+  .fb-sub{
+    writing-mode:vertical-rl; letter-spacing:1px; font-size:10.5px; color:var(--ink4);
+    margin-bottom:10px; white-space:nowrap;
+  }
+
+  /* ---------- 分层 ---------- */
+  .layer{
+    background:var(--card); border:1px solid var(--line); border-left:5px solid var(--lc);
+    border-radius:14px; padding:16px 18px 18px; box-shadow:0 1px 3px rgba(15,23,42,.05);
+  }
+  .layer-head{display:flex; align-items:baseline; gap:10px; margin-bottom:12px;}
+  .layer-badge{
+    font-size:14.5px; font-weight:700; color:var(--lc); letter-spacing:1px;
+  }
+  .layer-en{font-size:10.5px; font-weight:600; color:var(--ink4); letter-spacing:2.5px;}
+  .layer-desc{font-size:11.5px; color:var(--ink3); margin-left:auto;}
+
+  .layer-body{display:flex; flex-wrap:wrap; gap:14px;}
+
+  /* ---------- 组件卡片 ---------- */
+  .card{
+    flex:1 1 0; min-width:250px; background:#fbfdff;
+    border:1px solid var(--line); border-radius:12px; padding:14px 16px;
+    display:flex; gap:13px; align-items:flex-start;
+    transition:box-shadow .15s ease, transform .15s ease;
+  }
+  .card:hover{box-shadow:0 6px 16px rgba(15,23,42,.10); transform:translateY(-1px);}
+  .badge{
+    flex:0 0 auto; width:46px; height:46px; border-radius:11px;
+    background:var(--cc); color:#fff; font-size:13px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; letter-spacing:.5px;
+    box-shadow:0 4px 10px rgba(15,23,42,.15);
+  }
+  .card-main{min-width:0;}
+  .card-title{font-size:14.5px; font-weight:700; color:var(--ink); display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+  .path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:10.5px; color:var(--ink4); font-weight:400;}
+  .card-desc{font-size:12px; color:var(--ink2); line-height:1.55; margin-top:4px;}
+  .chips{display:flex; flex-wrap:wrap; gap:5px; margin-top:8px;}
+  .chips span{
+    font-size:10.5px; color:var(--ink2); background:#eef2f7; border:1px solid var(--line);
+    border-radius:999px; padding:2px 8px; line-height:1.4;
+  }
+
+  /* ---------- 层间数据流 ---------- */
+  .flow{display:flex; align-items:center; gap:14px; padding:8px 0 10px; height:66px;}
+  .flow-rail{flex:0 0 auto; width:26px; align-self:stretch; position:relative;}
+  .flow-rail svg{position:absolute; inset:0; width:100%; height:100%;}
+  .fl{stroke:var(--ink3); stroke-width:2; fill:none;}
+  .flow-tag{display:flex; flex-direction:column; gap:2px;}
+  .ft-main{font-size:13px; font-weight:600; color:var(--ink);}
+  .ft-sub{font-size:11px; color:var(--ink4);}
+  .ft-side{margin-left:auto; font-size:10.5px; color:var(--red); display:flex; align-items:center; gap:6px;}
+  .ft-side svg{width:18px; height:10px; flex:0 0 auto;}
+
+  footer{margin-top:26px; text-align:center; font-size:11px; color:var(--ink4);}
+  footer b{color:var(--ink3); font-weight:600;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="title-row">
+    <div class="logo">AO</div>
+    <div>
+      <h1>Agents Orchestration — 架构总览</h1>
+      <p>结果导向 Agent 编排框架（Result-driven Orchestration）· 只管任务到结果，不监控 agent 内部状态 · 提示词即协议，agent 零适配</p>
+    </div>
+  </div>
+  <div class="legend">
+    <div class="row">
+      <span class="lg"><i class="dot" style="background:#0284c7"></i>接入层</span>
+      <span class="lg"><i class="dot" style="background:#6d28d9"></i>规划层</span>
+      <span class="lg"><i class="dot" style="background:#0f766e"></i>资源与调度层</span>
+      <span class="lg"><i class="dot" style="background:#b45309"></i>执行层</span>
+      <span class="lg"><i class="dot" style="background:#be185d"></i>治理层</span>
+      <span class="lg"><i class="dot" style="background:#4d7c0f"></i>学习层</span>
+    </div>
+    <div class="row">
+      <span class="lg">
+        <svg class="arrow-svg" viewBox="0 0 16 8"><path d="M0 4 H11 M9 1 L13 4 L9 7" stroke="#475569" stroke-width="1.6" fill="none"/></svg>
+        主数据流（Result 契约驱动）
+      </span>
+      <span class="lg">
+        <svg class="dash-svg" viewBox="0 0 20 8"><path d="M0 4 H13 M11 1 L15 4 L11 7" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="3 2" fill="none"/></svg>
+        取消信号（best-effort）
+      </span>
+      <span class="lg">
+        <svg class="dash-svg" viewBox="0 0 20 8"><path d="M0 4 H13 M11 1 L15 4 L11 7" stroke="#7c3aed" stroke-width="1.6" stroke-dasharray="3 2" fill="none"/></svg>
+        学习反馈闭环
+      </span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="col-main">
+
+    <!-- ================= 接入层 ================= -->
+    <section class="layer" style="--lc:#0284c7">
+      <div class="layer-head">
+        <span class="layer-badge" style="--lc:#0284c7">接入层</span>
+        <span class="layer-en">ACCESS</span>
+        <span class="layer-desc">框架对外的全部入口——提交目标、查询进度、获取报告</span>
+      </div>
+      <div class="layer-body">
+        <div class="card">
+          <div class="badge" style="--cc:#0284c7">API</div>
+          <div class="card-main">
+            <div class="card-title">API 网关 <span class="path">orchestration/api/gateway.py</span></div>
+            <div class="card-desc">FastAPI REST + RunManager：提交 DAG / 进度快照 / 收尾报告 / 运行指标 / 取消 run / agent 档案。框架从「库」到「系统」的入口，协议通信不暴露到 HTTP。</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="badge" style="--cc:#0284c7">PY</div>
+          <div class="card-main">
+            <div class="card-title">编程式 API <span class="path">orchestration/scheduler*.py</span></div>
+            <div class="card-desc">库内嵌调用：<span class="path">Scheduler.run(dag)</span>（同步） / <span class="path">AsyncScheduler.run(dag, run_id, cancel_event)</span>（异步，多 run 并发隔离）。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
+          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">提交目标</span>
+        <span class="ft-sub">目标文本 → 拆解引擎；或直接提交 DAG JSON（API 网关）</span>
+      </div>
+    </div>
+
+    <!-- ================= 规划层 ================= -->
+    <section class="layer" style="--lc:#6d28d9">
+      <div class="layer-head">
+        <span class="layer-badge" style="--lc:#6d28d9">规划层</span>
+        <span class="layer-en">PLAN</span>
+        <span class="layer-desc">把目标拆成可执行、可并行、可审计的子任务</span>
+      </div>
+      <div class="layer-body">
+        <div class="card">
+          <div class="badge" style="--cc:#6d28d9">拆解</div>
+          <div class="card-main">
+            <div class="card-title">任务拆解引擎 <span class="path">orchestration/decomposer.py</span></div>
+            <div class="card-desc">LLM 将目标拆解为子任务 + 依赖 DAG（数据流依赖），拆解 Schema 严格校验。每个子任务声明 <span class="path">model / budget / timeout</span> 与能力标签 <span class="path">required_capabilities</span>——这是「谁适合干」的输入。</div>
+            <div class="chips"><span>输出：依赖 DAG</span><span>能力需求声明</span><span>Schema 校验</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
+          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">DAG + 能力需求</span>
+        <span class="ft-sub">注册表采集 agent 能力/资源声明（info_request，可刷新）→ 三级分配</span>
+      </div>
+    </div>
+
+    <!-- ================= 资源与调度层 ================= -->
+    <section class="layer" style="--lc:#0f766e">
+      <div class="layer-head">
+        <span class="layer-badge" style="--lc:#0f766e">资源与调度层</span>
+        <span class="layer-en">SCHEDULE</span>
+        <span class="layer-desc">核心：资源协调 + 并发派发 + 失败传播 + 死任务剪枝</span>
+      </div>
+      <div class="layer-body">
+        <div class="card">
+          <div class="badge" style="--cc:#0f766e">资源</div>
+          <div class="card-main">
+            <div class="card-title">Agent 注册表 <span class="path">orchestration/registry.py</span></div>
+            <div class="card-desc">能力是问出来的，不是配出来的：info_request 采集 capability / resource / constraint 声明入库（单点失败隔离）。三级分配全程留痕：exact（同 model 多实例轮询）→ capability（部分覆盖标 risk）→ degraded（降级通用 LLM）。连续任务失败达阈值自动摘除。</div>
+            <div class="chips"><span>exact 精确匹配</span><span>capability 能力匹配</span><span>degraded 降级留痕</span><span>失败摘除</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="badge" style="--cc:#0f766e">调度</div>
+          <div class="card-main">
+            <div class="card-title">调度器（同步 / 异步） <span class="path">scheduler.py · scheduler_async.py</span></div>
+            <div class="card-desc">拓扑派发；asyncio 并发推进（FIRST_COMPLETED），资源限制从统计走向执行：per-agent 并发上限（Semaphore）+ 滑动窗口限速。重试 N=2 指数退避 → 耗尽后失败传播 + 反向可达剪枝 → 取消下发（best-effort）。竞态处理：冻结派发 → 逐级取消 → 统一收尾，晚到结果丢弃。</div>
+            <div class="chips"><span>重试 N=2 指数退避</span><span>反向可达剪枝</span><span>取消 best-effort</span><span>竞态：冻结→取消→收尾</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
+          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">派发 task_request / info_request</span>
+        <span class="ft-sub">框架永远主动 · 模板 + 请求 JSON + 上游数据拼接（=== REQUEST === / === INPUT === 分段）</span>
+      </div>
+      <div class="ft-side">
+        <svg viewBox="0 0 18 10"><path d="M0 5 H11 M9 2 L13 5 L9 8" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="3 2" fill="none"/></svg>
+        cancel 变体（best-effort）
+      </div>
+    </div>
+
+    <!-- ================= 执行层 ================= -->
+    <section class="layer" style="--lc:#b45309">
+      <div class="layer-head">
+        <span class="layer-badge" style="--lc:#b45309">执行层</span>
+        <span class="layer-en">EXECUTE</span>
+        <span class="layer-desc">协议装配与解析——稳定性风险在此吸收，agent 侧零适配</span>
+      </div>
+      <div class="layer-body">
+        <div class="card">
+          <div class="badge" style="--cc:#b45309">适配</div>
+          <div class="card-main">
+            <div class="card-title">Agent 适配器 <span class="path">orchestration/adapters/</span></div>
+            <div class="card-desc">base：协议模板装配（完整/简化版 + few-shot 正反例）+ 双层校验解析（提取 → Schema 严格校验 → 失败自动重试一次，与任务重试分离计数）；DeepSeek 适配器走 AsyncOpenAI 真异步，同步适配器经线程化零改动兼容。</div>
+            <div class="chips"><span>模板分档（完整/简化）</span><span>request_id 强制回带</span><span>解析重试 + 修正提示</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="badge" style="--cc:#b45309">Agent</div>
+          <div class="card-main">
+            <div class="card-title">Agent 池（外部） <span class="path">DeepSeek / Claude / 自建</span></div>
+            <div class="card-desc">只接收请求、返回符合 Result 契约的 JSON——不为编排系统做任何适配。框架唯一硬约束：agent 能输出合法 JSON。所有稳定性风险（格式漂移/语义漂移/注入）由框架解析层吸收。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
+          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">Result 契约</span>
+        <span class="ft-sub">request_id 对账 · 取消任务晚到结果直接丢弃</span>
+      </div>
+    </div>
+
+    <!-- ================= 治理层 ================= -->
+    <section class="layer" style="--lc:#be185d">
+      <div class="layer-head">
+        <span class="layer-badge" style="--lc:#be185d">治理层</span>
+        <span class="layer-en">GOVERN</span>
+        <span class="layer-desc">结果审计 + 成本核算 + 可观测性（对账与反馈的数据面）</span>
+      </div>
+      <div class="layer-body">
+        <div class="card">
+          <div class="badge" style="--cc:#be185d">审计</div>
+          <div class="card-main">
+            <div class="card-title">结果审计器 <span class="path">orchestration/audit.py</span></div>
+            <div class="card-desc">正确性对账（状态 vs 契约矛盾/缺契约/晚到结果）+ 分配审计（降级/风险）+ 剪枝审计 + 语义交叉校验（capability / side_effects 声明 vs 实际）。verdict 三级：ok / warning / critical。</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="badge" style="--cc:#be185d">成本</div>
+          <div class="card-main">
+            <div class="card-title">成本核算 <span class="path">orchestration/cost.py</span></div>
+            <div class="card-desc">按 agent / 匹配类型归集成本与 token（降级成本单独暴露）；失败重试沉没成本、剪枝已发生消耗（先成功后仍被剪）单独列账；对 agent 预算声明做超支判定。</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="badge" style="--cc:#be185d">观测</div>
+          <div class="card-main">
+            <div class="card-title">可观测性 <span class="path">orchestration/metrics.py</span></div>
+            <div class="card-desc">指标聚合（按 run 隔离：成功率/耗时/峰值并发/降级数）+ 结构化日志（key=value）。指标直接喂审计与学习，日志覆盖请求/响应/解析/取消全链路。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
+          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">AuditReport / PruneReport</span>
+        <span class="ft-sub">正确性 · 成本 · 剪枝证据（root_failure + pruned 清单）</span>
+      </div>
+    </div>
+
+    <!-- ================= 学习层 ================= -->
+    <section class="layer" style="--lc:#4d7c0f">
+      <div class="layer-head">
+        <span class="layer-badge" style="--lc:#4d7c0f">学习层</span>
+        <span class="layer-en">LEARN</span>
+        <span class="layer-desc">复盘失败与低效，沉淀规则反哺拆解与分配</span>
+      </div>
+      <div class="layer-body">
+        <div class="card">
+          <div class="badge" style="--cc:#4d7c0f">学习</div>
+          <div class="card-main">
+            <div class="card-title">学习引擎 <span class="path">orchestration/learning.py</span></div>
+            <div class="card-desc">启发式规则提取，阈值可配，产出「证据 + 动作建议」：REC（解析层排查）/ FP（错误码频发换 agent）/ DEG（降级占比高，核对拆解建议）/ CAP（风险分配失败率高，重采能力）/ BUG（超预算）/ PRU（剪枝复盘拆解并行度）。</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="badge" style="--cc:#4d7c0f">规则</div>
+          <div class="card-main">
+            <div class="card-title">规则库 / 经验库</div>
+            <div class="card-desc">规则带证据链与动作建议，为拆解策略优化、能力声明重采、预算校准提供闭环接口——反馈虚线见右侧。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ================= 学习反馈闭环（右侧虚线） ================= -->
+  <div class="col-fb">
+    <div class="fb-tag">规则反馈 · 优化拆解策略</div>
+    <div class="fb-sub">反哺规划层与资源分配</div>
+    <svg class="fb-svg" viewBox="0 0 44 400" preserveAspectRatio="none">
+      <line x1="22" y1="26" x2="22" y2="360" stroke="#7c3aed" stroke-width="2.4" stroke-dasharray="7 5"/>
+      <path d="M22 30 L16 46 M22 30 L28 46" stroke="#7c3aed" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+      <path d="M22 356 L16 340 M22 356 L28 340" stroke="#7c3aed" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+      <circle cx="22" cy="24" r="4" fill="#7c3aed"/>
+      <circle cx="22" cy="362" r="4" fill="#7c3aed"/>
+    </svg>
+  </div>
+</main>
+
+<footer>
+  <b>Agents Orchestration</b> · 架构 v1.0 · 2026-08-15 · 阶段一~四全部完成（拆解 → 资源协调 → 并发调度 → 治理学习）· 151/151 测试全绿
+</footer>
+
+</div>
+</body>
+</html>

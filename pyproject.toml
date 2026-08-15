@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agents-orchestration"
+version = "0.1.0"
+description = "结果导向 Agent 编排框架（Result-driven Orchestration）——只管任务到结果，不监控 agent 内部状态"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "openai>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+gateway = [
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+]
+
+[tool.setuptools.packages.find]
+include = ["orchestration*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
