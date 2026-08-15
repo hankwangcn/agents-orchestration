@@ -57,6 +57,7 @@ class LearningEngine:
         self._learn_capability_risk(out, audit)
         self._learn_budget(out, cost)
         self._learn_pruning(out, audit)
+        self._learn_interrupted(out, audit)
         return out
 
     # ------------------------------------------------------------------
@@ -155,6 +156,30 @@ class LearningEngine:
                 evidence=ob,
                 action="更新该 agent 预算声明，或拆解时收紧任务 budget 上限",
             ))
+
+    def _learn_interrupted(self, out: LearningReport, audit: AuditReport) -> None:
+        """中断任务（断点恢复后待人工）→ 检查崩溃原因与副作用声明质量。"""
+        if not audit.interrupted_tasks:
+            return
+        out.add(LearningRule(
+            rule_id="INT-1",
+            severity="medium",
+            category="reconciliation",
+            message=(
+                f"{len(audit.interrupted_tasks)} 个任务断点恢复后中断待人工确认："
+                "进程崩溃点存在副作用任务（不自动重派，避免副作用执行两次）"
+            ),
+            evidence={
+                "tasks": [
+                    {"task_id": t["task_id"], "side_effects": t["side_effects"]}
+                    for t in audit.interrupted_tasks
+                ]
+            },
+            action=(
+                "排查进程崩溃原因（StateStore 事件驱动写入是否生效）；"
+                "人工 resolve（complete/cancel/retry）后重新 resume"
+            ),
+        ))
 
     def _learn_pruning(self, out: LearningReport, audit: AuditReport) -> None:
         """剪枝（含 final 被剪）→ 拆解并行度/依赖质量复盘。"""

@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-151%2F151%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-168%2F168%20passing-brightgreen)](tests/)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不监控 agent 内部状态。**
 
@@ -15,7 +15,8 @@
 
 | | |
 |---|---|
-| **结果导向编排** | 框架只管理任务到结果的结果契约，不监控 agent 内部运行状态；批处理式"任务 → 结果"执行，无运行时状态、无断点 |
+| **结果导向编排** | 框架只管理任务到结果的结果契约，不监控 agent 内部运行状态；批处理式"任务 → 结果"执行，过程交给 agent 自己 |
+| **断点持久化** | 调度状态（DAG / 任务状态 / 分配 / 剪枝）事件驱动落盘 SQLite；进程崩溃后无缝恢复——纯产出任务自动重派，副作用任务置 `INTERRUPTED` 等人工确认，已终态任务复用结果与成本 |
 | **提示词即协议** | 与 agent 的唯一沟通方式是格式化提示词模板 + JSON 请求（`task_request` / `info_request`）；agent 零适配，协议演进仅需修改模板文本 |
 | **零成本接入** | agent 暴露 OpenAI 兼容 chat completions 端点即可接入，注册表配置即完成，框架零代码；不兼容的自建系统仅需实现一个 `_call_llm` 方法 |
 | **资源统计与分配** | 通过 `info_request` 采集 agent 能力 / 资源 / 约束声明入库；三级分配策略：精确匹配 → 能力匹配 → 降级兜底，全程留痕 |
@@ -147,12 +148,14 @@ rules = LearningEngine().learn(audit, cost)   # 六类规则：REC / FP / DEG / 
 from orchestration.adapters.deepseek import DeepSeekAdapter
 from orchestration.api.gateway import create_app
 from orchestration.registry import AgentRegistry
+from orchestration.state_store import SqliteStateStore
 
 registry = AgentRegistry()
 registry.register(DeepSeekAdapter(), agent_id="general")
 registry.collect()
 
-app, manager = create_app(registry)   # (FastAPI app, RunManager)
+# 传入 state_store 启用断点持久化（调度状态事件驱动落盘 SQLite）
+app, manager = create_app(registry, state_store=SqliteStateStore("state.db"))
 ```
 
 ```bash
@@ -169,6 +172,25 @@ curl -X POST http://localhost:8000/api/runs \
 curl http://localhost:8000/api/runs/{run_id}
 curl http://localhost:8000/api/runs/{run_id}/report
 ```
+
+### 4.1 断点恢复（进程崩溃后继续）
+
+启用 `state_store` 后，进程崩溃（断电 / 宕机）时调度状态已逐事件落盘，重启后无缝续跑：
+
+```bash
+# 恢复 run：RUNNING 任务按 A+B 策略处理——
+#   无副作用 → 自动重派；声明副作用 → 置 INTERRUPTED 等待人工
+curl -X POST http://localhost:8000/api/runs/{run_id}/resume
+
+# 人工确认中断任务（仅 INTERRUPTED 可 resolve）
+curl -X POST http://localhost:8000/api/runs/{run_id}/tasks/{task_id}/resolve \
+  -H 'Content-Type: application/json' \
+  -d '{"action": "complete", "result": {"task_id": "...", "success": true, "output": {...}}}'
+#   action: complete（附人工核实的结果契约）| cancel | retry
+#   retry 后需再次 POST /resume 继续调度
+```
+
+恢复语义：已终态任务（成功/失败/取消）的结果与成本直接复用，不重跑不重计费；崩溃瞬间已发出的请求无法撤回，纯产出任务可能重复执行一次（A 策略的固有代价）。
 
 ### 5. 真实模型端到端冒烟
 
@@ -230,11 +252,13 @@ agents-orchestration/
 │   ├── audit.py             # 结果审计：对账 / 分配审计 / 剪枝审计 / 交叉校验
 │   ├── cost.py              # 成本核算：按 agent / 匹配类型归集 + 预算判定
 │   ├── learning.py          # 自我学习：启发式规则提取（六类）
+│   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘）
 │   ├── api/gateway.py       # API 网关：RunManager + FastAPI 端点
 │   └── adapters/            # Agent 适配器（base 抽象 同步/异步 + DeepSeek）
 ├── scripts/
-│   └── smoke_deepseek.py    # 真实模型端到端冒烟
-├── tests/                   # 151 项测试（解析层 / 剪枝 / 调度 / 治理 / 并发 / 网关）
+│   ├── smoke_deepseek.py    # 真实模型端到端冒烟
+│   └── smoke_resume.py      # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
+├── tests/                   # 168 项测试（解析层 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图
 └── pyproject.toml
 ```
@@ -245,10 +269,10 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 151/151 全绿
+pytest        # 168/168 全绿
 ```
 
-测试覆盖重点：解析层（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期。
+测试覆盖重点：解析层（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）。
 
 ---
 

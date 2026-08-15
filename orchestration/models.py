@@ -18,6 +18,7 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     SKIPPED = "skipped"
+    INTERRUPTED = "interrupted"  # 断点恢复时副作用任务不自动重派，待人工确认（A+B 策略）
 
 
 class SideEffects(str, Enum):
@@ -84,6 +85,7 @@ class Task(BaseModel):
             TaskStatus.FAILED,
             TaskStatus.CANCELLED,
             TaskStatus.SKIPPED,
+            TaskStatus.INTERRUPTED,  # 终态：等人工 resolve（complete/cancel/retry）
         )
 
 

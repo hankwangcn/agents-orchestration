@@ -11,6 +11,7 @@ from orchestration.models import (
     ErrorInfo,
     ResourceRequirement,
     Result,
+    SideEffects,
     Task,
     TaskStatus,
 )
@@ -244,3 +245,31 @@ class TestFullPipeline:
         assert cost.pruned_cost == 0.02  # a、c 均已成功但整棵被剪
         # 剪枝质量规则必然触发（失败模式需 ≥2 失败任务，此处仅 b 一个）
         assert any(r.category == "pruning_quality" for r in rules)
+
+
+# ---------------------------------------------------------------------------
+# 中断任务规则（断点恢复）
+# ---------------------------------------------------------------------------
+
+class TestInterruptedRule:
+    def test_int1_rule_when_interrupted(self):
+        """存在中断任务 → INT-1 规则（待人工确认，检查崩溃原因）。"""
+        dag = DAG(tasks={
+            "a": Task(id="a", desc="a", status=TaskStatus.INTERRUPTED,
+                      side_effects=SideEffects.EXTERNAL_API),
+        })
+        report = ScheduleReport(dag=dag)
+        audit = Auditor().audit(report)
+        cost = CostAccountant().account(report)
+        rules = learn(audit, cost)
+        ids = rule_ids(rules)
+
+        assert "INT-1" in ids
+        rule = next(r for r in rules if r.rule_id == "INT-1")
+        assert rule.evidence["tasks"][0]["task_id"] == "a"
+
+    def test_no_int1_when_clean(self):
+        dag = dag_of(("a", []))
+        report = run_audit_cost(dag, {"a": [ok("a")]})
+        audit, cost = report
+        assert "INT-1" not in rule_ids(learn(audit, cost))

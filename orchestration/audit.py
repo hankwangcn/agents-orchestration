@@ -33,6 +33,8 @@ class AuditReport(BaseModel):
     """SUCCESS/FAILED 终态但缺 result（硬性断链，协议 §4.2：无契约框架断链）。"""
     late_results: list[str] = Field(default_factory=list)
     """已取消但带 result（晚到结果，调度器应丢弃——此处标记暴露）。"""
+    interrupted_tasks: list[dict] = Field(default_factory=list)
+    """断点恢复时置 INTERRUPTED 的任务（副作用任务不自动重派，待人工确认）。"""
 
     # -- 分配审计（阶段三留痕消费）--
     assignments_by_type: dict[str, int] = Field(default_factory=dict)
@@ -126,6 +128,12 @@ class Auditor:
         elif task.status == TaskStatus.CANCELLED:
             if res is not None:
                 out.late_results.append(tid)  # 晚到结果：应被调度器丢弃
+        elif task.status == TaskStatus.INTERRUPTED:
+            out.interrupted_tasks.append({
+                "task_id": tid,
+                "side_effects": task.side_effects.value,
+                "detail": "断点恢复：副作用任务不自动重派，待人工 resolve（complete/cancel/retry）",
+            })
 
     def _audit_assignments(
         self,
@@ -207,7 +215,8 @@ class Auditor:
                 f"{len(out.status_result_mismatches)} 处状态与结果矛盾"
             )
         elif (out.prune_events or out.degraded_tasks or out.risky_tasks
-              or out.side_effect_mismatches or out.late_results):
+              or out.side_effect_mismatches or out.late_results
+              or out.interrupted_tasks):
             out.verdict = "warning"
             parts = []
             if out.prune_events:
@@ -220,4 +229,6 @@ class Auditor:
                 parts.append(f"{len(out.side_effect_mismatches)} 处副作用声明不一致")
             if out.late_results:
                 parts.append(f"{len(out.late_results)} 个晚到结果")
+            if out.interrupted_tasks:
+                parts.append(f"{len(out.interrupted_tasks)} 个任务中断待人工确认")
             out.issues.append("；".join(parts))

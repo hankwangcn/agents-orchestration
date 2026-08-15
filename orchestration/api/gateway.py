@@ -18,9 +18,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from ..metrics import MetricsCollector, configure_logging, log_event
-from ..models import DAG
+from ..models import DAG, Result, TaskStatus
 from ..registry import AgentRegistry
 from ..scheduler_async import AsyncScheduler, ScheduleReport
+from ..state_store import StateStore
 
 
 # ---------------------------------------------------------------------------
@@ -42,18 +43,28 @@ class RunHandle:
 
 
 class RunManager:
-    """DAG 提交与 run 生命周期管理（单进程内运行）。"""
+    """DAG 提交与 run 生命周期管理（单进程内运行）。
+
+    state_store：启用断点持久化（可选）。启用后每次调度状态变更落盘，
+    进程崩溃后可通过 resume 恢复；副作用任务恢复时置 INTERRUPTED，
+    经 resolve（complete/cancel/retry）人工确认后继续。
+    """
 
     def __init__(
         self,
         registry: AgentRegistry,
         retries: int = 2,
         metrics: Optional[MetricsCollector] = None,
+        state_store: Optional[StateStore] = None,
     ):
         self._registry = registry
         self._metrics = metrics or MetricsCollector()
+        self._store = state_store
         self._scheduler = AsyncScheduler(
-            registry=registry, retries=retries, metrics=self._metrics
+            registry=registry,
+            retries=retries,
+            metrics=self._metrics,
+            state_store=state_store,
         )
         self._runs: dict[str, RunHandle] = {}
 
@@ -62,6 +73,8 @@ class RunManager:
         rid = run_id or uuid.uuid4().hex[:12]
         if rid in self._runs:
             raise ValueError(f"run_id 已存在：{rid}")
+        if self._store is not None and self._store.has_run(rid):
+            raise ValueError(f"run_id 已存在于存储中：{rid}")
         handle = RunHandle(run_id=rid, dag=dag, cancel_event=asyncio.Event())
         handle.started_at = _now()
         self._runs[rid] = handle
@@ -131,6 +144,105 @@ class RunManager:
         assert handle.cancel_event is not None
         handle.cancel_event.set()
         return {"run_id": run_id, "cancel_requested": True}
+
+    async def resume(self, run_id: str) -> str:
+        """崩溃恢复：从 StateStore 加载 run 并继续调度（需启用断点持久化）。
+
+        RUNNING 任务按 A+B 策略处理：无副作用重派，有副作用置 INTERRUPTED。
+        """
+        if self._store is None:
+            raise HTTPException(
+                status_code=400, detail="未启用断点持久化（state_store），无法恢复"
+            )
+        if not self._store.has_run(run_id):
+            raise HTTPException(status_code=404, detail=f"run 不存在：{run_id}")
+        if run_id in self._runs and self._runs[run_id].status == "running":
+            raise HTTPException(status_code=409, detail="run 已在运行中")
+        dag = self._store.load_run(run_id)["dag"]
+        handle = RunHandle(run_id=run_id, dag=dag, cancel_event=asyncio.Event())
+        handle.started_at = _now()
+        self._runs[run_id] = handle
+        handle.task = asyncio.create_task(self._run_background_resume(handle))
+        log_event("run_resume_requested", run_id=run_id)
+        return run_id
+
+    async def _run_background_resume(self, handle: RunHandle) -> None:
+        try:
+            handle.report = await self._scheduler.resume_run(
+                handle.run_id, cancel_event=handle.cancel_event
+            )
+            handle.dag = handle.report.dag  # 同步为调度器实际推进的对象
+            handle.status = "done"
+        except Exception as e:  # 调度器异常兜底（防御）
+            handle.error = str(e)
+            handle.status = "failed"
+            log_event("run_error", run_id=handle.run_id, error=str(e))
+        finally:
+            handle.finished_at = _now()
+
+    async def resolve_task(
+        self,
+        run_id: str,
+        task_id: str,
+        action: str,
+        result: Optional[dict] = None,
+    ) -> dict:
+        """人工确认中断任务（仅 INTERRUPTED 可 resolve；需启用断点持久化）。
+
+        - complete：附带人工核实的结果契约 → 任务置 SUCCESS
+        - cancel：任务置 CANCELLED（副作用未执行或已核实放弃）
+        - retry：任务置 PENDING（等待下一次 resume 重新派发）
+        """
+        if self._store is None:
+            raise HTTPException(
+                status_code=400, detail="resolve 需要启用断点持久化（state_store）"
+            )
+        data = self._store.load_run(run_id)
+        dag: DAG = data["dag"]
+        if task_id not in dag.tasks:
+            raise HTTPException(status_code=404, detail=f"任务不存在：{task_id}")
+        task = dag.tasks[task_id]
+        if task.status != TaskStatus.INTERRUPTED:
+            raise HTTPException(
+                status_code=409,
+                detail=f"任务 {task_id} 状态 {task.status.value}，仅 INTERRUPTED 可 resolve",
+            )
+        if action == "complete":
+            if not result:
+                raise HTTPException(status_code=400, detail="complete 需要 result 契约")
+            task.result = Result.model_validate(result)
+            task.status = TaskStatus.SUCCESS
+        elif action == "cancel":
+            task.status = TaskStatus.CANCELLED
+        elif action == "retry":
+            task.status = TaskStatus.PENDING
+            task.result = None
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知 action：{action}（可选 complete | cancel | retry）",
+            )
+        # 保留原 assignments/prune，局部状态变更落盘
+        self._store.save_run(
+            run_id,
+            dag,
+            assignments=list(data["assignments"].values()),
+            prune_reports=data["prune_reports"],
+        )
+        log_event(
+            "task_resolved", run_id=run_id, task_id=task_id,
+            action=action, new_status=task.status.value,
+        )
+        return {
+            "run_id": run_id,
+            "task_id": task_id,
+            "action": action,
+            "status": task.status.value,
+            "hint": (
+                "任务已置 PENDING，调用 POST /api/runs/{run_id}/resume 继续调度"
+                if action == "retry" else ""
+            ),
+        }
 
     async def wait(self, run_id: str, timeout: Optional[float] = None) -> ScheduleReport:
         """等待 run 结束并返回报告（编程式调用用）。"""
@@ -213,14 +325,25 @@ class DagSubmit(BaseModel):
     run_id: Optional[str] = None
 
 
+class TaskResolve(BaseModel):
+    action: str = Field(description="complete | cancel | retry")
+    result: Optional[dict] = Field(default=None, description="complete 时的人工核实结果契约")
+
+
 def create_app(
     registry: AgentRegistry,
     retries: int = 2,
     metrics: Optional[MetricsCollector] = None,
+    state_store: Optional[StateStore] = None,
 ) -> tuple[FastAPI, RunManager]:
-    """构造 (app, manager)。registry 需已注册 agent（可先 collect 能力声明）。"""
+    """构造 (app, manager)。registry 需已注册 agent（可先 collect 能力声明）。
+
+    state_store：启用断点持久化（SQLite 等），提供 resume / resolve 端点。
+    """
     configure_logging()
-    manager = RunManager(registry, retries=retries, metrics=metrics)
+    manager = RunManager(
+        registry, retries=retries, metrics=metrics, state_store=state_store
+    )
     app = FastAPI(
         title="Agents Orchestration Gateway",
         description="结果导向 Agent 编排框架——API 入口",
@@ -253,6 +376,19 @@ def create_app(
     async def cancel_run(run_id: str) -> dict:
         """请求取消 run（best-effort）。"""
         return await manager.cancel(run_id)
+
+    @app.post("/api/runs/{run_id}/resume")
+    async def resume_run(run_id: str) -> dict:
+        """崩溃恢复：从 StateStore 加载 run 并继续调度。"""
+        rid = await manager.resume(run_id)
+        return {"run_id": rid, "status": "resumed"}
+
+    @app.post("/api/runs/{run_id}/tasks/{task_id}/resolve")
+    async def resolve_task(run_id: str, task_id: str, payload: TaskResolve) -> dict:
+        """人工确认中断任务（仅 INTERRUPTED 可 resolve）。"""
+        return await manager.resolve_task(
+            run_id, task_id, payload.action, payload.result
+        )
 
     @app.get("/api/agents")
     async def agents_list() -> dict:

@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-08-15
-> 状态：已实现（阶段一至四全部完成，151/151 测试全绿）
+> 状态：已实现（阶段一至四全部完成 + 断点持久化增强，168/168 测试全绿）
 
 ---
 
@@ -16,8 +16,8 @@
 
 | 维度 | LangGraph / CrewAI 等 | 本框架 |
 |---|---|---|
-| 编排形态 | 过程导向（状态机、断点、消息流转） | **结果导向（无状态批处理）** |
-| 运行时状态 | 全程维护 | **不维护，过程交给 agent 自己** |
+| 编排形态 | 过程导向（状态机、断点、消息流转） | **结果导向（只管结果契约；调度状态可断点持久化）** |
+| 运行时状态 | 全程维护 | **不监控 agent 过程；仅持久化框架侧调度状态（断点）** |
 | 干预能力 | 可中途介入 | 一旦派发，只等结果（或取消） |
 | 差异化能力 | 协作拓扑、记忆、工具链 | **资源统计、多 agent 资源协调、自我学习** |
 
@@ -30,7 +30,7 @@
 | # | 决策 | 说明 |
 |---|---|---|
 | D1 | **任务拆解 = 任务分解** | 合并为"任务拆解"，输出带依赖关系的 DAG |
-| D2 | **结果导向，无状态** | 框架不管 agent 过程、不维护运行时状态、无 checkpoint / 断点续跑 |
+| D2 | **结果导向 + 断点持久化（不冲突）** | 框架不监控 agent 内部过程、只收结果契约；框架**自身**的调度状态（DAG/任务状态/分配/剪枝）事件驱动落盘，崩溃后恢复续跑——两者正交。恢复策略 A+B：纯产出任务重派，副作用任务置 INTERRUPTED 等人工（2026-08-15 推翻"无断点"旧决策，原理由是阶段一求简的工程简化，非哲学必然） |
 | D3 | **失败处理分层** | 自动重试 N 次 → 耗尽后失败传播 + 死任务剪枝 → 统一反馈 |
 | D4 | **工程要点** | ① 取消契约（best-effort，不影响"无状态"原则）② 竞态处理（先冻结派发再传播取消）③ 结果契约含副作用声明 |
 | D5 | **提示词即协议** | 消息沟通格式 = 格式化提示词模板，随请求注入；agent 零适配，只接收两类请求（任务/信息）；格式演进只改模板，见 [messaging-protocol.md](./messaging-protocol.md) |
@@ -236,6 +236,29 @@ flowchart LR
 
 ---
 
+## 5.5 断点持久化（崩溃恢复，2026-08-15 新增）
+
+**与结果导向不冲突**：断点只存框架侧的调度状态，不碰 agent 内部状态——"只管结果"哲学不变。
+
+- **StateStore 抽象 + SQLite 实现**（orchestration/state_store.py）：单文件零依赖，可换 Postgres
+- **事件驱动写入**：任务状态变更（启动置 RUNNING / 终态 / 剪枝 / 取消）即落盘，非定期快照——崩溃点数据最新，丢失窗口≈0
+- **恢复入口**：`AsyncScheduler.resume_run(run_id)` + 网关 `POST /api/runs/{id}/resume`
+
+**恢复策略 A+B**（对崩溃瞬间 RUNNING 任务）：
+
+| 任务类型 | 策略 | 理由 |
+|---|---|---|
+| 无副作用（纯产出） | A：重置 PENDING **自动重派** | 重复执行最坏损失一次成本；协议前提即纯产出 |
+| 声明副作用 | B：置 `INTERRUPTED` **不重派**，等人工 | 重派 = 副作用可能执行两次，不可逆 |
+| 已终态（SUCCESS/FAILED/CANCELLED/SKIPPED） | 保留，结果/成本/审计记录复用 | 不重跑不重计费 |
+
+- **人工出口**（最小 HITL，仅事故恢复用途）：网关 `POST /api/runs/{id}/tasks/{tid}/resolve`，action=complete（附人工核实结果契约）/ cancel / retry（retry 后再次 resume）
+- 中断任务的下游若被 SKIPPED，人工确认后 resume 时依赖恢复（全 SUCCESS）自动重新可派发
+- **审计与学习**：INTERRUPTED 任务进审计（warning）+ 学习 INT-1 规则（检查崩溃原因与副作用声明）
+- 关键前提（冒烟实测发现并修复）：RUNNING 状态必须在任务启动时即落盘，否则副作用任务崩溃恢复后会被当普通任务重派，A+B 策略被绕过
+
+---
+
 ## 6. 编排定位对照
 
 | 编排环节 | 本框架对应模块 | 说明 |
@@ -280,6 +303,7 @@ flowchart LR
   - API 网关（orchestration/api/gateway.py）——FastAPI REST：`POST /api/runs` 提交 DAG（后台执行）、`GET /api/runs/{id}` 进度快照、`GET /api/runs/{id}/report` 收尾报告（含审计数据源）、`GET /api/runs/{id}/metrics`、`POST /api/runs/{id}/cancel`、`GET /api/agents`；`RunManager` 管理 run 生命周期（编程式 `submit/wait/report/cancel`）
   - `ScheduleReport` 上移至 models.py——同步/异步调度器共用同一契约，阶段二审计/成本/学习直接消费（已冒烟验证：AsyncScheduler 报告 → Auditor/CostAccountant/LearningEngine 全链路）
   - 测试 151/151 全绿，见 §10
+- [x] **断点持久化增强**（2026-08-15 完成，独立于四阶段）— 见 §5.5 — 实现：`SqliteStateStore`（orchestration/state_store.py，事件驱动落盘 + assignments/prune 表）、`AsyncScheduler.resume_run`（A+B 恢复策略 + SKIPPED 依赖恢复 + seed 注入复用已完成结果）、网关 `resume`/`resolve` 端点、审计 INTERRUPTED 标记 + 学习 INT-1 规则。冒烟（scripts/smoke_resume.py）实测：无副作用任务执行中崩溃 → 恢复重派续跑；副作用任务执行中崩溃 → INTERRUPTED → 人工 complete → 续跑。修复关键缺陷：任务启动 RUNNING 未落盘（副作用任务崩溃恢复会被当普通任务重派）。测试 168/168 全绿，见 §10
 
 ---
 
@@ -313,13 +337,15 @@ agentsOrchestration/
 │   ├── messaging-protocol.md
 │   └── architecture-diagram.html
 ├── scripts/
-│   └── smoke_deepseek.py       # 真实 DeepSeek 端到端冒烟（README 有运行说明）
+│   ├── smoke_deepseek.py       # 真实 DeepSeek 端到端冒烟（README 有运行说明）
+│   └── smoke_resume.py         # 断点恢复冒烟：崩溃 → 恢复 → 续跑（§5.5）
 ├── orchestration/           # 主包
 │   ├── models.py            # Task / Result / Assignment / DAG（含图算法）/ ScheduleReport
 │   ├── protocol.py          # PROTOCOL_PROMPT 模板（完整/简化版）+ 请求构造 + 渲染
 │   ├── validation.py        # 双层校验：提取 → Schema 校验 → 解析重试（同步/异步）
 │   ├── decomposer.py        # 任务拆解：LLM 生成 DAG + 拆解 Schema 校验
 │   ├── registry.py          # Agent 注册表：采集 / 分配 / 摘除（阶段三）
+│   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘，§5.5）
 │   ├── scheduler.py         # 同步调度器：拓扑派发 + 任务分配 + 失败传播 + 剪枝
 │   ├── scheduler_async.py   # 异步并发调度器：并发派发 + 竞态处理 + 资源限制（阶段四）
 │   ├── metrics.py           # 可观测性：指标聚合 + 结构化日志（阶段四）
@@ -342,5 +368,6 @@ agentsOrchestration/
     ├── test_cost.py           # 成本核算（阶段二）
     ├── test_learning.py       # 自我学习规则（阶段二）
     ├── test_metrics.py        # 指标收集 + 结构化日志（阶段四）
-    └── test_gateway.py        # API 网关（阶段四）
+    ├── test_gateway.py        # API 网关（阶段四）
+    └── test_resume.py         # 断点持久化 + 恢复（A+B 策略，§5.5）
 ```

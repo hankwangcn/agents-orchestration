@@ -259,3 +259,34 @@ class TestVerdict:
         audit = audit_of(report)
         assert audit.verdict == "ok"
         assert audit.issues == []
+
+
+# ---------------------------------------------------------------------------
+# 中断任务（断点恢复 A+B 策略）
+# ---------------------------------------------------------------------------
+
+class TestInterrupted:
+    def test_interrupted_task_flagged_warning(self):
+        """INTERRUPTED 任务 → 审计标记 + warning（待人工确认）。"""
+        dag = DAG(tasks={
+            "a": Task(id="a", desc="a", status=TaskStatus.INTERRUPTED,
+                      side_effects=SideEffects.EXTERNAL_API),
+            "b": Task(id="b", desc="b", deps=["a"], status=TaskStatus.SKIPPED),
+        })
+        report = ScheduleReport(dag=dag)
+        audit = audit_of(report)
+
+        assert audit.interrupted_tasks == [{
+            "task_id": "a",
+            "side_effects": "external_api",
+            "detail": "断点恢复：副作用任务不自动重派，待人工 resolve（complete/cancel/retry）",
+        }]
+        assert audit.verdict == "warning"
+        assert any("中断" in i for i in audit.issues)
+
+    def test_interrupted_without_side_effects_not_present(self):
+        """无中断任务 → interrupted_tasks 为空。"""
+        dag = dag_of(("a", []))
+        report = run_report(dag, {"a": [ok("a")]})
+        audit = audit_of(report)
+        assert audit.interrupted_tasks == []
