@@ -71,7 +71,7 @@ class LearningEngine:
                 category="reconciliation",
                 message=(
                     "结果契约对账失败：存在缺契约或状态矛盾的任务，"
-                    "解析层/协议链路需排查"
+                    "解析组件/协议链路需排查"
                 ),
                 evidence={
                     "missing": audit.missing_results,

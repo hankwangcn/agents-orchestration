@@ -293,7 +293,7 @@ flowchart LR
 编号口径：阶段二=治理与学习、阶段三=资源统计与任务分配、阶段四=并发执行模型。
 **实现顺序为 三 → 二 → 四**：并发模型（四）依赖资源统计（三）提供并发度上限，避免盲目并发打爆限流；审计数据面（二）在任务分配（三）落地后建模，可直接按"多 agent 归属"一步到位，避免返工。
 
-- [x] **阶段一：核心闭环**（2026-08-14 完成）— 任务拆解（DAG）+ DAG 调度器 + 结果契约 + Agent 适配器（DeepSeek）+ 失败处理（重试 N=2 指数退避 / 失败传播 / 死任务剪枝 / 取消契约，见 T3/T4）— 解析层与剪枝 50/50 测试全绿，见 §10
+- [x] **阶段一：核心闭环**（2026-08-14 完成）— 任务拆解（DAG）+ DAG 调度器 + 结果契约 + Agent 适配器（DeepSeek）+ 失败处理（重试 N=2 指数退避 / 失败传播 / 死任务剪枝 / 取消契约，见 T3/T4）— 解析组件与剪枝 50/50 测试全绿，见 §10
 - [x] **阶段三：资源统计与任务分配**（2026-08-15 完成）— 能力注册表 + info_request 采集 + 多 agent 资源协调 + 任务分配 — 实现：`AgentRegistry`（orchestration/registry.py），能力/资源/约束经 info_request 采集解析入库（可刷新，单点失败隔离）；分配三级策略全程留痕（`Assignment`：exact 精确 model 匹配（同 model 多实例轮询）→ capability 能力匹配（部分覆盖标记 risk）→ degraded 降级默认通用 LLM（显式留痕，默认不可用回退任意可用 agent）；连续任务失败达到阈值自动摘除（best-effort）；`Task.required_capabilities` 由拆解层声明。测试 76/76 全绿，见 §10
 - [x] **阶段二：治理与学习**（2026-08-15 完成）— 审计器 + 成本核算 + 自我学习规则提取 — 实现：`Auditor`（orchestration/audit.py）——正确性对账（状态 vs 结果契约矛盾/缺失契约/晚到结果）、分配审计（降级/风险留痕消费）、剪枝审计（§5.4 取消报告归集）、语义交叉校验（§7.5 副作用声明 vs 报告）、错误模式归集，verdict 三级判定（ok/warning/critical）；`CostAccountant`（orchestration/cost.py）——按 agent/匹配类型归集成本与 token、失败成本与剪枝已发生消耗单独暴露（§5.4 口径）、预算超支判定（声明 0 不判）；`LearningEngine`（orchestration/learning.py）——启发式规则提取（REC/FP/DEG/CAP/BUG/PRU 六类，阈值可配，证据+动作建议），供拆解优化闭环消费。测试 115/115 全绿，见 §10
 - [x] **阶段四：并发执行模型**（2026-08-15 完成，依赖阶段三）— asyncio 并发调度 + 多模型接入 + 可观测性 + API 网关 — 实现：
@@ -324,8 +324,8 @@ flowchart LR
 | LLM 客户端 | openai SDK | 默认对接 **OpenAI 兼容 chat completions 端点**（事实标准）。DeepSeek 适配器即该形态（base_url 指向 api.deepseek.com）；客户 agent 暴露兼容端点后，注册表配置 `base_url + api_key + model` 即零成本接入（§3.3） |
 | 并发模型 | asyncio（阶段四） | 事件驱动并发调度；adapter 默认线程化兼容同步实现 |
 | API 网关 | FastAPI + uvicorn（阶段四） | REST 入口：提交 / 查询 / 报告 / 取消 / 指标 |
-| 解析层 | 手写校验器（不引 jsonschema） | 结果契约字段固定，手写更严格、错误信息可直接用于修正提示 |
-| 测试 | pytest | 解析层与调度器优先覆盖 |
+| 解析组件 | 手写校验器（不引 jsonschema） | 结果契约字段固定，手写更严格、错误信息可直接用于修正提示 |
+| 测试 | pytest | 解析组件与调度器优先覆盖 |
 
 ### 10.1 目录结构
 

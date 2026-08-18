@@ -5,7 +5,7 @@
 
 真实模型下同步验证三件事：
 1. 协议模板（完整版 + few-shot）能被真实 LLM 理解并输出合法 Result JSON
-2. 解析层对真实格式漂移的兜底（杂文提取 / 重试）
+2. 解析组件对真实格式漂移的兜底（杂文提取 / 重试）
 3. 真实调用下成本 / token / 耗时回填情况
 
 运行：.venv/bin/python scripts/smoke_deepseek.py
