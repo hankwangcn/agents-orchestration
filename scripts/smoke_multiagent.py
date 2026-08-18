@@ -259,6 +259,39 @@ async def main() -> int:
     print("\n== 冒烟结论 ==")
     print("PASS：多 agent 全流程闭环（真实 HTTP 往返 + 三级分配 + 故障注入 + 治理）"
           if ok else f"FAIL：{results.count(False)} 项断言未通过")
+
+    if "--visual" in sys.argv:
+        try:
+            from visualize_report import render_smoke_report
+
+            agent_meta = {}
+            for agent_id in server.configs:
+                a = registry.get(agent_id)
+                agent_meta[agent_id] = {
+                    "capabilities": a.capabilities,
+                    "max_concurrency": a.max_concurrency,
+                    "rate_limit_per_min": a.rate_limit_per_min,
+                    "budget_limit_usd": a.budget_limit_usd,
+                    "languages": a.languages,
+                    "status": a.status,
+                    "consecutive_failures": a.consecutive_failures,
+                }
+            agent_stats = {
+                aid: {"calls": server.calls.get(aid, 0),
+                      "active_peak": server.active_peak.get(aid, 0)}
+                for aid in server.configs
+            }
+            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            html_path = os.path.join(repo_root, "reports",
+                                     "smoke_multiagent_report.html")
+            render_smoke_report(
+                report=report, agent_meta=agent_meta, agent_stats=agent_stats,
+                audit=audit, cost=cost, learned=learned, ok=ok,
+                output_path=html_path,
+            )
+            print(f"\n== 可视化报告已生成 ==\n   {html_path}")
+        except Exception as e:  # 可视化失败不影响冒烟结论
+            print(f"   [warn] 报告渲染失败: {e}")
     return 0 if ok else 1
 
 
