@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 dependencies = [
     "pydantic>=2.0",
     "openai>=1.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +21,9 @@ gateway = [
     "fastapi>=0.100",
     "uvicorn>=0.20",
 ]
+
+[project.scripts]
+ao = "orchestration.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["orchestration*"]

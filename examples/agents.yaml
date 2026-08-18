@@ -1,0 +1,41 @@
+# agents-orchestration 示例配置：N 个 agent 批量注册（零代码接入）
+#
+# 用法：
+#   ao serve --config examples/agents.yaml --state-store run.db
+#   # 或程序内：registry = AgentRegistry.from_config("examples/agents.yaml")
+#
+# 规则：
+#   - 只写"agent 在哪、叫什么模型"——能力/并发上限/预算声明一条都不用配，
+#     启动时 info_request 逐个问出（能力是问出来的，不是配出来的）
+#   - base_url 指向任意 OpenAI 兼容 chat completions 端点即接入
+#     （DeepSeek / OpenAI / vLLM / Ollama / 自研服务均可）
+#   - api_key 优先级：api_key > api_key_env（环境变量）> $DEEPSEEK_API_KEY
+#   - 同 model 多条目 = 多实例自动分流
+max_consecutive_failures: 3          # 连续失败摘除阈值（可选，默认 3）
+default_agent: translator            # 降级目标 agent_id（可选，缺省=第一个注册的）
+
+agents:
+  - agent_id: translator
+    base_url: http://agent-translator:8000/v1
+    model: qwen2.5-7b
+    api_key_env: TRANSLATOR_KEY
+
+  - agent_id: coder-a
+    base_url: http://agent-coder-1:8000/v1
+    model: qwen2.5-coder
+    api_key_env: CODER_KEY
+
+  - agent_id: coder-b
+    base_url: http://agent-coder-2:8000/v1
+    model: qwen2.5-coder
+    api_key_env: CODER_KEY
+
+  - agent_id: analyst
+    base_url: https://api.deepseek.com/v1
+    model: deepseek-chat
+    # api_key_env 缺省 → 回落到 $DEEPSEEK_API_KEY
+    template_mode: full               # 可选：full | simple（简化模板省 token）
+
+  - agent_id: local-helper           # 同进程 Python agent 示例（见适配器文档）
+    base_url: http://127.0.0.1:9999/v1
+    model: inprocess

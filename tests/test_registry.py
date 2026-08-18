@@ -331,3 +331,139 @@ class TestHealth:
 
         got = [reg.assign(make_task(model="deepseek-chat"))[0].agent_id for _ in range(3)]
         assert got == ["gpt_2", "gpt_2", "gpt_2"]
+
+
+# ---------------------------------------------------------------------------
+# from_config：配置驱动批量注册（N 个 agent 的场景）
+# ---------------------------------------------------------------------------
+
+class MiniAdapter(AgentAdapter):
+    """极简进程内 adapter：from_config 测试用（避免 HTTP/API key 依赖）。"""
+
+    def __init__(self, model: str = "deepseek-chat"):
+        super().__init__(model=model)
+
+    def _call_llm(self, messages):
+        return "{}"
+
+    def run_info(self, scope, questions, request_id):
+        return Result(task_id="", success=True, output={})
+
+
+def _factory(entry):
+    return MiniAdapter(entry.get("model", "deepseek-chat"))
+
+
+class TestFromConfig:
+    def test_dict_config(self):
+        """dict 配置批量注册：agent_id / model / 降级目标 / 摘除阈值。"""
+        reg = AgentRegistry.from_config(
+            {
+                "max_consecutive_failures": 5,
+                "default_agent": "translator",
+                "agents": [
+                    {"agent_id": "translator", "model": "m1"},
+                    {"agent_id": "coder", "model": "m2"},
+                ],
+            },
+            adapter_factory=_factory,
+        )
+        assert set(reg.agents) == {"translator", "coder"}
+        assert reg.get("translator").model == "m1"
+        assert reg.max_consecutive_failures == 5
+        # 降级目标（degraded 分配落点）
+        task = make_task(model="unknown-model")
+        assignment, _ = reg.assign(task)
+        assert assignment.agent_id == "translator"
+        assert assignment.match_type == "degraded"
+
+    def test_default_agent_auto_first(self):
+        """未指定 default_agent → 第一个注册的作为降级目标。"""
+        reg = AgentRegistry.from_config(
+            {"agents": [{"agent_id": "a", "model": "m1"},
+                        {"agent_id": "b", "model": "m2"}]},
+            adapter_factory=_factory,
+        )
+        task = make_task(model="nope")
+        assert reg.assign(task)[0].agent_id == "a"
+
+    def test_yaml_file(self, tmp_path, monkeypatch):
+        """YAML 文件注册：api_key_env 从环境变量取。"""
+        monkeypatch.setenv("TRANS_KEY", "sk-env-1")
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text(
+            "max_consecutive_failures: 4\n"
+            "default_agent: translator\n"
+            "agents:\n"
+            "  - agent_id: translator\n"
+            "    base_url: http://a:8000/v1\n"
+            "    model: m1\n"
+            "    api_key_env: TRANS_KEY\n"
+            "  - agent_id: coder\n"
+            "    base_url: http://b:8000/v1\n"
+            "    model: m2\n"
+            "    api_key: sk-2\n",
+            encoding="utf-8",
+        )
+        calls: list[dict] = []
+
+        class FakeDeepSeek:
+            def __init__(self, model="deepseek-chat", base_url="",
+                         api_key=None, template_mode="full"):
+                self.model = model
+                calls.append(dict(model=model, base_url=base_url,
+                                  api_key=api_key, template_mode=template_mode))
+
+        import orchestration.adapters.deepseek as ds_mod
+        monkeypatch.setattr(ds_mod, "DeepSeekAdapter", FakeDeepSeek)
+        reg = AgentRegistry.from_config(str(cfg))
+
+        assert set(reg.agents) == {"translator", "coder"}
+        assert reg.max_consecutive_failures == 4
+        by_id = {c["model"]: c for c in calls}
+        assert calls[0]["base_url"] == "http://a:8000/v1"
+        assert calls[0]["api_key"] == "sk-env-1"     # api_key_env 优先环境变量
+        assert calls[1]["api_key"] == "sk-2"         # 显式 api_key
+        assert calls[0]["template_mode"] == "full"
+
+    def test_json_file(self, tmp_path):
+        cfg = tmp_path / "agents.json"
+        cfg.write_text(
+            '{"agents": [{"agent_id": "x", "model": "m1"}]}', encoding="utf-8")
+        reg = AgentRegistry.from_config(str(cfg), adapter_factory=_factory)
+        assert set(reg.agents) == {"x"}
+
+    def test_inprocess_adapter_factory(self):
+        """自定义工厂：进程内函数也走 from_config（传输可换）。"""
+        from orchestration.adapters.inprocess import InProcessAdapter
+
+        def fn(messages):
+            return {"success": True, "task_id": "?"}
+
+        reg = AgentRegistry.from_config(
+            {"agents": [{"agent_id": "local", "model": "local-1"}]},
+            adapter_factory=lambda e: InProcessAdapter(fn, model=e["model"]),
+        )
+        adapter = reg.get_adapter("local")
+        assert isinstance(adapter, InProcessAdapter)
+        assert adapter.model == "local-1"
+
+    def test_invalid_extension(self, tmp_path):
+        with pytest.raises(RegistryError):
+            AgentRegistry.from_config(str(tmp_path / "agents.txt"))
+
+    def test_missing_yaml_dep(self, tmp_path, monkeypatch):
+        """无 pyyaml 时给出可操作报错（不裸 ImportError）。"""
+        import builtins
+        real_import = builtins.__import__
+
+        def fake_import(name, *a, **kw):
+            if name == "yaml":
+                raise ImportError("No module named 'yaml'")
+            return real_import(name, *a, **kw)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        cfg = tmp_path / "agents.yaml"
+        cfg.write_text("agents: []", encoding="utf-8")
+        with pytest.raises(RegistryError, match="pyyaml"):
+            AgentRegistry.from_config(str(cfg))

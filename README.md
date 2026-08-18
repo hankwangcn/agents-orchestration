@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-168%2F168%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-199%2F199%20passing-brightgreen)](tests/)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不监控 agent 内部状态。**
 
@@ -18,7 +18,9 @@
 | **结果导向编排** | 框架只管理任务到结果的结果契约，不监控 agent 内部运行状态；批处理式"任务 → 结果"执行，过程交给 agent 自己 |
 | **断点持久化** | 调度状态（DAG / 任务状态 / 分配 / 剪枝）事件驱动落盘 SQLite；进程崩溃后无缝恢复——纯产出任务自动重派，副作用任务置 `INTERRUPTED` 等人工确认，已终态任务复用结果与成本 |
 | **提示词即协议** | 与 agent 的唯一沟通方式是格式化提示词模板 + JSON 请求（`task_request` / `info_request`）；agent 零适配，协议演进仅需修改模板文本 |
-| **零成本接入** | agent 暴露 OpenAI 兼容 chat completions 端点即可接入，注册表配置即完成，框架零代码；不兼容的自建系统仅需实现一个 `_call_llm` 方法 |
+| **零成本接入** | agent 暴露 OpenAI 兼容 chat completions 端点即可接入（DeepSeek / vLLM / Ollama / 自研），注册表配置即完成；同进程 Python agent 免 HTTP（`InProcessAdapter` 直调本地函数）；不兼容的自建系统仅需实现一个 `_call_llm` 方法 |
+| **配置驱动注册** | `AgentRegistry.from_config(agents.yaml)` 批量注册 N 个 agent——只写"agent 在哪、叫什么模型"，能力 / 并发 / 预算声明由 `info_request` 自动问出；`api_key_env` 从环境变量取密钥 |
+| **CLI 运维入口** | 网关瘦客户端 `ao`（仅标准库 urllib）：提交 DAG / 进度 / 报告 / 指标 / 取消 / 断点恢复 / 人工 resolve / agent 档案，一条命令完成运维与人工出口 |
 | **资源统计与分配** | 通过 `info_request` 采集 agent 能力 / 资源 / 约束声明入库；三级分配策略：精确匹配 → 能力匹配 → 降级兜底，全程留痕 |
 | **失败处理** | 自动重试 → 失败传播 → 反向可达性剪枝（死任务消除）；并发场景下竞态安全（先冻结派发，再逐级取消，晚到结果丢弃） |
 | **并发调度** | asyncio 事件驱动并发派发；per-agent 并发上限与速率配额强制执行；单实例可并发运行多个 DAG，状态隔离 |
@@ -52,7 +54,7 @@ pip install -e ".[dev,gateway]"   # 开发安装（含测试与网关依赖）
 | `dev` | 运行测试 | `pytest` |
 | `gateway` | API 网关（FastAPI 服务） | `fastapi`, `uvicorn` |
 
-> 最小运行环境仅需 `pydantic>=2.0` 与 `openai>=1.0`（`pip install .` 即可）。
+> 最小运行环境仅需 `pydantic>=2.0`、`openai>=1.0`、`pyyaml>=6.0`（`pip install .` 即可；YAML 注册仅在用到 `from_config(yaml)` 时需要）。
 
 ## 配置凭据
 
@@ -192,6 +194,47 @@ curl -X POST http://localhost:8000/api/runs/{run_id}/tasks/{task_id}/resolve \
 
 恢复语义：已终态任务（成功/失败/取消）的结果与成本直接复用，不重跑不重计费；崩溃瞬间已发出的请求无法撤回，纯产出任务可能重复执行一次（A 策略的固有代价）。
 
+### 4.2 CLI 与 N 个 agent 配置（`ao` 命令 + `agents.yaml`）
+
+安装包自带 `ao` 命令（网关瘦客户端，仅标准库 urllib，无需额外依赖）。**CLI 不绕过网关直连调度器**——所有命令都发 HTTP 到网关，框架作为系统的对外门不变：
+
+```bash
+export AO_GATEWAY=http://127.0.0.1:8000        # 或 -u 指定；默认 localhost:8000
+
+ao serve --config agents.yaml --state-store run.db   # 1) 启动网关（批量注册 + 断点持久化）
+ao agents                                       # 2) 看 agent 档案（能力/并发/预算已采集入库）
+ao submit dag.json --run-id r1                  # 3) 提交 DAG
+ao wait r1 --timeout 300                        # 4) 等结束并打印报告
+ao metrics r1                                   # 5) 运行指标（成本/并发峰值/成功率）
+ao resolve r1 t5 --action complete --result '{"task_id":"t5","success":true,"output":{...}}'
+                                                # 6) 人工出口：确认 INTERRUPTED 任务
+ao resume r1                                    # 7) 断点恢复（需 state_store）
+```
+
+N 个 agent 只需一份配置文件，零代码注册——**只写"agent 在哪、叫什么模型"**，能力 / 并发上限 / 预算声明一条都不用配（那是 `info_request` 问出来的）：
+
+```yaml
+# agents.yaml
+max_consecutive_failures: 3      # 可选：连续失败摘除阈值
+default_agent: translator        # 可选：降级目标（缺省=第一个注册的）
+agents:
+  - agent_id: translator
+    base_url: http://agent-translator:8000/v1   # 任意 OpenAI 兼容端点
+    model: qwen2.5-7b
+    api_key_env: TRANSLATOR_KEY                  # 或 api_key: sk-xxx
+  - agent_id: coder-a                            # 同 model 多实例 → 自动分流
+    base_url: http://agent-coder-1:8000/v1
+    model: qwen2.5-coder
+  - agent_id: coder-b
+    base_url: http://agent-coder-2:8000/v1
+    model: qwen2.5-coder
+  - agent_id: analyst
+    base_url: http://agent-analyst:8000/v1
+    model: deepseek-chat
+```
+
+程序内也可用同一份配置：`registry = AgentRegistry.from_config("agents.yaml")`；自定义传输（如进程内函数）传 `adapter_factory` 覆盖默认工厂即可。
+
 ### 5. 真实模型端到端冒烟
 
 ```bash
@@ -237,6 +280,30 @@ registry.register(
 
 - **兼容端点** → 配置即接入，框架零代码
 - **不兼容的自建系统** → 继承 `AgentAdapter` 实现 `_call_llm`（约 20 行），协议装配、双层校验、重试、成本回填由基类统一复用
+- **同进程 Python agent（函数 / 类 / 脚本）** → `InProcessAdapter` 直调本地函数，免 HTTP 传输（序列化 + 网络往返只为调一个本地函数是纯开销）。协议约束（输出合法 JSON）由基类解析组件照样强制，稳定性兜底一个不少：
+
+```python
+from orchestration.adapters.inprocess import InProcessAdapter
+from orchestration.registry import AgentRegistry
+
+def my_agent(messages: list[dict]) -> str:
+    """接收协议装配后的消息，返回 JSON 字符串（或 dict，自动序列化）。"""
+    ...  # 业务逻辑，输出 Result 契约
+
+registry = AgentRegistry()
+registry.register(InProcessAdapter(my_agent, model="local-helper"), agent_id="local")
+```
+
+- **N 个 agent 批量注册** → `AgentRegistry.from_config(agents.yaml / agents.json / dict)`（见 4.2），程序内等价用法：
+
+```python
+from orchestration.registry import AgentRegistry
+
+registry = AgentRegistry.from_config("agents.yaml")   # 默认工厂：DeepSeekAdapter
+# 自定义传输（进程内函数等）：
+registry = AgentRegistry.from_config(cfg, adapter_factory=lambda e: InProcessAdapter(fn, model=e["model"]))
+```
+
 - 协议内容（模板 + 请求 JSON）对所有接入方式相同，与传输层解耦
 
 ---
@@ -266,16 +333,18 @@ agents-orchestration/
 │   ├── cost.py              # 成本核算：按 agent / 匹配类型归集 + 预算判定
 │   ├── learning.py          # 自我学习：启发式规则提取（六类）
 │   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘）
+│   ├── cli.py               # CLI `ao`：网关瘦客户端（仅标准库 urllib）
 │   ├── api/gateway.py       # API 网关：RunManager + FastAPI 端点
-│   └── adapters/            # Agent 适配器（base 抽象 同步/异步 + DeepSeek）
+│   └── adapters/            # Agent 适配器：base（协议装配/双层校验/重试/成本回填）
+│                            #   + deepseek（OpenAI 兼容 HTTP）+ inprocess（免 HTTP）
 ├── scripts/
 │   ├── mock_agents.py        # 本地 OpenAI 兼容 mock agent 服务（多角色 + 故障注入）
 │   ├── smoke_multiagent.py   # 多 agent 全流程冒烟（真实 HTTP，无需 key）
 │   ├── smoke_deepseek.py     # 真实模型端到端冒烟（需 $DEEPSEEK_API_KEY）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 168 项测试（解析组件 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点）
-├── docs/                    # 架构文档 / 消息协议 / 架构图
-└── pyproject.toml
+├── tests/                   # 199 项测试（解析组件 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
+├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告
+└── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
 
 ---
@@ -284,10 +353,10 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 168/168 全绿
+pytest        # 199/199 全绿
 ```
 
-测试覆盖重点：解析组件（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）。
+测试覆盖重点：解析组件（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）。
 
 ---
 

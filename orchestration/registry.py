@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional, Union
 
 from pydantic import BaseModel
 
@@ -347,6 +347,99 @@ class AgentRegistry:
 
     def available_agents(self) -> list[RegisteredAgent]:
         return [a for a in self._agents.values() if a.available]
+
+    # ---------- 配置驱动批量注册（N 个 agent 的场景） ----------
+
+    @classmethod
+    def from_config(
+        cls,
+        config: Union[str, dict],
+        adapter_factory: Optional[Callable[[dict], AgentAdapter]] = None,
+    ) -> "AgentRegistry":
+        """从配置文件 / dict 批量注册 N 个 agent（免逐行 register()）。
+
+        config 支持三种形态：
+        - dict —— 直接传入配置
+        - str 且以 .yaml/.yml 结尾 —— 读 YAML 文件（需 pyyaml）
+        - str 且以 .json 结尾 —— 读 JSON 文件
+
+        配置结构（能力/资源/约束声明一条都不用配——那是 info_request
+        collect() 问出来的；这里只写"agent 在哪、叫什么模型"）：
+
+            max_consecutive_failures: 3        # 可选：连续失败摘除阈值
+            default_agent: translator          # 可选：降级目标 agent_id
+            agents:
+              - agent_id: translator           # 可选，缺省自动生成
+                base_url: http://agent-1:8000/v1
+                model: qwen2.5-7b
+                api_key: sk-xxx                # 可选（二选一）
+                api_key_env: TRANSLATOR_KEY    # 可选：从环境变量取 key
+                template_mode: full            # 可选：full | simple
+
+        默认 adapter_factory：DeepSeekAdapter（OpenAI 兼容端点——base_url
+        指向任意 OpenAI 兼容服务即接入，零代码；与框架"配置即接入"一致）。
+        api_key 优先级：条目 api_key > api_key_env 环境变量 > 环境变量
+        DEEPSEEK_API_KEY（DeepSeekAdapter 默认行为）。
+
+        自定义传输（如进程内函数）可传 adapter_factory 覆盖：
+            AgentRegistry.from_config(cfg, adapter_factory=lambda e:
+                InProcessAdapter(my_fn, model=e["model"]))
+        """
+        data = cls._load_config(config)
+        registry = cls(
+            max_consecutive_failures=int(
+                data.get("max_consecutive_failures", 3)
+            )
+        )
+        factory = adapter_factory or cls._default_adapter_factory
+        for entry in data.get("agents") or []:
+            adapter = factory(entry)
+            agent_id = registry.register(
+                adapter, agent_id=entry.get("agent_id")
+            )
+            if data.get("default_agent") == agent_id:
+                registry.register_default(agent_id)
+        return registry
+
+    @staticmethod
+    def _load_config(config: Union[str, dict]) -> dict:
+        if isinstance(config, dict):
+            return config
+        path = config
+        if path.endswith((".yaml", ".yml")):
+            try:
+                import yaml
+            except ImportError:
+                raise RegistryError(
+                    f"解析 YAML 需安装 pyyaml：pip install pyyaml（{path}）"
+                ) from None
+            with open(path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        if path.endswith(".json"):
+            import json
+
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        raise RegistryError(
+            f"不支持的配置文件格式（支持 .yaml/.yml/.json）：{path}"
+        )
+
+    @staticmethod
+    def _default_adapter_factory(entry: dict) -> AgentAdapter:
+        """默认工厂：OpenAI 兼容端点（DeepSeekAdapter 只认 base_url+api_key+model）。"""
+        from .adapters.deepseek import DeepSeekAdapter
+
+        api_key = entry.get("api_key")
+        if not api_key and entry.get("api_key_env"):
+            import os
+
+            api_key = os.environ.get(entry["api_key_env"])
+        return DeepSeekAdapter(
+            model=entry.get("model", "deepseek-chat"),
+            base_url=entry.get("base_url", "https://api.deepseek.com"),
+            api_key=api_key,
+            template_mode=entry.get("template_mode", "full"),
+        )
 
 
 def _ts() -> str:
