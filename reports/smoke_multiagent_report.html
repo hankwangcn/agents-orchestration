@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>多 Agent 全流程冒烟 — 可视化报告</title>
+<style>
+  body { font-family: system-ui,-apple-system,"Segoe UI",sans-serif;
+         margin:0; background:#f1f5f9; color:#0f172a; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header .sub { color:#64748b; font-size: 13px; }
+  .summary { display:flex; flex-wrap:wrap; gap:12px; margin: 18px 0; }
+  .cell { background:#fff; border:1px solid #e2e8f0; border-radius:12px;
+          padding:10px 18px; min-width:96px; text-align:center; }
+  .cell-v { font-size:20px; font-weight:700; }
+  .cell-k { font-size:12px; margin-top:2px; }
+  .card { background:#fff; border:1px solid #e2e8f0; border-radius:14px;
+          padding:16px 20px; margin:14px 0; }
+  .card h2 { font-size:15px; margin:0 0 12px; }
+  .card h3 { font-size:13.5px; margin:10px 0 6px; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th { text-align:left; color:#64748b; font-weight:600; padding:6px 8px;
+       border-bottom:2px solid #e2e8f0; }
+  td { padding:6px 8px; border-bottom:1px solid #eef2f7; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px;
+           color:#fff; font-size:11px; font-weight:600; }
+  .grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+           gap:14px; }
+  .grid3 .card { margin:0; }
+  ul { margin:6px 0; padding-left:18px; font-size:12.5px; }
+  li { margin:3px 0; }
+  .muted { color:#94a3b8; }
+  .lg { display:inline-flex; align-items:center; gap:6px; font-size:12px;
+        color:#475569; margin-right:16px; }
+  .lg i { width:12px; height:12px; border-radius:3px; display:inline-block; }
+  .prune-root { font-size:13px; margin:6px 0; }
+  .prune-item { font-size:12.5px; color:#475569; margin:3px 0 3px 20px; }
+  footer { margin-top:26px; color:#94a3b8; font-size:12px; text-align:center; }
+  .svgbox { overflow-x:auto; }
+</style>
+</head>
+<body><div class="wrap">
+<header>
+  <h1>多 Agent 全流程冒烟 — 可视化报告</h1>
+  <div class="sub">本地 mock agent（真实 HTTP 往返）· 生成于 2026-08-18 14:36:05</div>
+</header>
+<div class="summary"><div class="cell"><div class="cell-v">partial</div><div class="cell-k" style="color:#64748b">最终状态</div></div><div class="cell"><div class="cell-v">7</div><div class="cell-k" style="color:#16a34a">成功</div></div><div class="cell"><div class="cell-v">3</div><div class="cell-k" style="color:#dc2626">失败</div></div><div class="cell"><div class="cell-v">1</div><div class="cell-k" style="color:#9ca3af">已取消</div></div><div class="cell"><div class="cell-v">0.9s</div><div class="cell-k" style="color:#0f172a">总耗时</div></div><div class="cell"><div class="cell-v">$0.0024</div><div class="cell-k" style="color:#0f172a">总成本</div></div><div class="cell"><div class="cell-v">warning</div><div class="cell-k" style="color:#f59e0b">审计结论</div></div><div class="cell"><div class="cell-v">PASS</div><div class="cell-k" style="color:#16a34a">冒烟结论</div></div></div>
+<div class="card"><h2>DAG 执行全景</h2><div class="svgbox"><svg xmlns="http://www.w3.org/2000/svg" width="544" height="1048" viewBox="0 0 544 1048" font-family="system-ui,-apple-system,sans-serif">
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/></marker></defs>
+<path d="M240,638.0 C264,638.0 280,68.0 304,68.0" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M240,296.0 C264,296.0 280,182.0 304,182.0" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M240,410.0 C264,410.0 280,182.0 304,182.0" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arrow)"/>
+<path d="M240,524.0 C264,524.0 280,182.0 304,182.0" fill="none" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="24" y="24" width="216" height="88" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+<rect x="166" y="32" width="66" height="18" rx="9" fill="#16a34a"/><text x="199.0" y="44.5" font-size="11" fill="#fff" text-anchor="middle">成功</text>
+<text x="36" y="45" font-size="13.5" font-weight="700" fill="#0f172a">t1</text>
+<text x="36" y="64" font-size="11.5" fill="#475569">实现一个 Python 排序函数</text>
+<text x="36" y="82" font-size="11.5"><tspan fill="#334155">coder</tspan><tspan fill="#16a34a" font-weight="600"> · exact</tspan></text>
+<text x="36" y="99" font-size="10.5" fill="#94a3b8">99ms · 669tok</text>
+<rect x="24" y="138" width="216" height="88" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+<rect x="166" y="146" width="66" height="18" rx="9" fill="#16a34a"/><text x="199.0" y="158.5" font-size="11" fill="#fff" text-anchor="middle">成功</text>
+<text x="36" y="159" font-size="13.5" font-weight="700" fill="#0f172a">t2</text>
+<text x="36" y="178" font-size="11.5" fill="#475569">把 README 翻译成英文</text>
+<text x="36" y="196" font-size="11.5"><tspan fill="#334155">coder</tspan><tspan fill="#16a34a" font-weight="600"> · exact ⚠</tspan></text>
+<text x="36" y="213" font-size="10.5" fill="#94a3b8">84ms · 668tok</text>
+<rect x="24" y="252" width="216" height="88" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+<rect x="166" y="260" width="66" height="18" rx="9" fill="#16a34a"/><text x="199.0" y="272.5" font-size="11" fill="#fff" text-anchor="middle">成功</text>
+<text x="36" y="273" font-size="13.5" font-weight="700" fill="#0f172a">t3</text>
+<text x="36" y="292" font-size="11.5" fill="#475569">把 Hello World 翻译…</text>
+<text x="36" y="310" font-size="11.5"><tspan fill="#334155">translator</tspan><tspan fill="#16a34a" font-weight="600"> · exact</tspan></text>
+<text x="36" y="327" font-size="10.5" fill="#94a3b8">168ms · 669tok</text>
+<rect x="24" y="366" width="216" height="88" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+<rect x="166" y="374" width="66" height="18" rx="9" fill="#16a34a"/><text x="199.0" y="386.5" font-size="11" fill="#fff" text-anchor="middle">成功</text>
+<text x="36" y="387" font-size="13.5" font-weight="700" fill="#0f172a">t4</text>
+<text x="36" y="406" font-size="11.5" fill="#475569">分析 2025 年销售数据并给出…</text>
+<text x="36" y="424" font-size="11.5"><tspan fill="#334155">analyst</tspan><tspan fill="#2563eb" font-weight="600"> · capability</tspan></text>
+<text x="36" y="441" font-size="10.5" fill="#94a3b8">107ms · 760tok</text>
+<rect x="24" y="480" width="216" height="88" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+<rect x="166" y="488" width="66" height="18" rx="9" fill="#16a34a"/><text x="199.0" y="500.5" font-size="11" fill="#fff" text-anchor="middle">成功</text>
+<text x="36" y="501" font-size="13.5" font-weight="700" fill="#0f172a">t5</text>
+<text x="36" y="520" font-size="11.5" fill="#475569">剪辑宣传视频</text>
+<text x="36" y="538" font-size="11.5"><tspan fill="#334155">translator</tspan><tspan fill="#f59e0b" font-weight="600"> · degraded</tspan></text>
+<text x="36" y="555" font-size="10.5" fill="#94a3b8">167ms · 661tok</text>
+<rect x="24" y="594" width="216" height="88" rx="10" fill="#ffffff" stroke="#dc2626" stroke-width="2.4"/>
+<rect x="166" y="602" width="66" height="18" rx="9" fill="#dc2626"/><text x="199.0" y="614.5" font-size="11" fill="#fff" text-anchor="middle">失败</text>
+<text x="36" y="615" font-size="13.5" font-weight="700" fill="#0f172a">t6a</text>
+<text x="36" y="634" font-size="11.5" fill="#475569">flaky 任务 1（注定失败）</text>
+<text x="36" y="652" font-size="11.5"><tspan fill="#334155">flaky</tspan><tspan fill="#16a34a" font-weight="600"> · exact</tspan></text>
+<text x="36" y="669" font-size="10.5" fill="#94a3b8">✕ fail_injected</text>
+<rect x="24" y="708" width="216" height="88" rx="10" fill="#ffffff" stroke="#dc2626" stroke-width="2.4"/>
+<rect x="166" y="716" width="66" height="18" rx="9" fill="#dc2626"/><text x="199.0" y="728.5" font-size="11" fill="#fff" text-anchor="middle">失败</text>
+<text x="36" y="729" font-size="13.5" font-weight="700" fill="#0f172a">t6b</text>
+<text x="36" y="748" font-size="11.5" fill="#475569">flaky 任务 2（注定失败）</text>
+<text x="36" y="766" font-size="11.5"><tspan fill="#334155">flaky</tspan><tspan fill="#16a34a" font-weight="600"> · exact</tspan></text>
+<text x="36" y="783" font-size="10.5" fill="#94a3b8">✕ fail_injected</text>
+<rect x="24" y="822" width="216" height="88" rx="10" fill="#ffffff" stroke="#dc2626" stroke-width="2.4"/>
+<rect x="166" y="830" width="66" height="18" rx="9" fill="#dc2626"/><text x="199.0" y="842.5" font-size="11" fill="#fff" text-anchor="middle">失败</text>
+<text x="36" y="843" font-size="13.5" font-weight="700" fill="#0f172a">t6c</text>
+<text x="36" y="862" font-size="11.5" fill="#475569">flaky 任务 3（注定失败，…</text>
+<text x="36" y="880" font-size="11.5"><tspan fill="#334155">flaky</tspan><tspan fill="#16a34a" font-weight="600"> · exact</tspan></text>
+<text x="36" y="897" font-size="10.5" fill="#94a3b8">✕ fail_injected</text>
+<rect x="304" y="24" width="216" height="88" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="5,4" stroke-width="1.8"/>
+<rect x="446" y="32" width="66" height="18" rx="9" fill="#9ca3af"/><text x="479.0" y="44.5" font-size="11" fill="#fff" text-anchor="middle">已取消</text>
+<text x="316" y="45" font-size="13.5" font-weight="700" fill="#0f172a">t7</text>
+<text x="316" y="64" font-size="11.5" fill="#475569">依赖 t6a 的后续任务</text>
+<text x="316" y="99" font-size="10.5" fill="#94a3b8">✂ downstream_chain</text>
+<rect x="304" y="138" width="216" height="88" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+<rect x="446" y="146" width="66" height="18" rx="9" fill="#16a34a"/><text x="479.0" y="158.5" font-size="11" fill="#fff" text-anchor="middle">成功</text>
+<text x="316" y="159" font-size="13.5" font-weight="700" fill="#0f172a">t8</text>
+<text x="316" y="178" font-size="11.5" fill="#475569">汇总 t3/t4/t5 的结果</text>
+<text x="316" y="196" font-size="11.5"><tspan fill="#334155">translator</tspan><tspan fill="#f59e0b" font-weight="600"> · degraded</tspan></text>
+<text x="316" y="213" font-size="10.5" fill="#94a3b8">154ms · 767tok</text>
+<rect x="24" y="936" width="216" height="88" rx="10" fill="#ffffff" stroke="#16a34a" stroke-width="1.8"/>
+<rect x="166" y="944" width="66" height="18" rx="9" fill="#16a34a"/><text x="199.0" y="956.5" font-size="11" fill="#fff" text-anchor="middle">成功</text>
+<text x="36" y="957" font-size="13.5" font-weight="700" fill="#0f172a">t9</text>
+<text x="36" y="976" font-size="11.5" fill="#475569">独立交付：写项目周报</text>
+<text x="36" y="994" font-size="11.5"><tspan fill="#334155">translator</tspan><tspan fill="#f59e0b" font-weight="600"> · degraded</tspan></text>
+<text x="36" y="1011" font-size="10.5" fill="#94a3b8">155ms · 663tok</text>
+</svg></div>
+<div style="margin-top:10px"><span class="lg"><i style="background:#16a34a"></i>成功</span><span class="lg"><i style="background:#dc2626"></i>失败</span><span class="lg"><i style="background:#9ca3af"></i>已取消</span><span class="lg"><i style="background:#f59e0b"></i>中断</span><span class="lg muted">虚线边框 = 被剪枝（✂）　</span><span class="lg muted">红色粗边 = 失败根（✕）　</span><span class="lg muted">⚠ = 能力风险留痕</span></div></div>
+<div class="card"><h2>Agent 阵容（声明 vs 观测）</h2><table><thead><tr><th>agent</th><th>能力声明</th><th>并发上限</th><th>限速 / 预算</th><th>语言</th><th>HTTP 调用数</th><th>并发峰值</th><th>状态</th></tr></thead><tbody><tr><td><b>analyst</b></td><td>data_analysis, report_writing</td><td>1</td><td>20/min · $0.0</td><td>中文, English</td><td>2</td><td>1</td><td><span class="badge" style="background:#16a34a">正常</span></td></tr><tr><td><b>coder</b></td><td>code_gen, code_review</td><td>1</td><td>30/min · $0.0</td><td>中文, English</td><td>2</td><td>1</td><td><span class="badge" style="background:#16a34a">正常</span></td></tr><tr><td><b>flaky</b></td><td>general</td><td>1</td><td>0/min · $0.0</td><td>中文, English</td><td>9</td><td>0</td><td><span class="badge" style="background:#dc2626">已摘除 (连续失败 3)</span></td></tr><tr><td><b>translator</b></td><td>translation</td><td>2</td><td>60/min · $5.0</td><td>中文, English</td><td>4</td><td>2</td><td><span class="badge" style="background:#16a34a">正常</span></td></tr></tbody></table></div>
+<div class="card"><h2>分配留痕（三级策略）</h2><table><thead><tr><th>任务</th><th>分配 agent</th><th>匹配类型</th><th>说明</th></tr></thead><tbody><tr><td><b>t1</b></td><td>coder</td><td><span class="badge" style="background:#16a34a">exact</span> </td><td>覆盖能力：[&#x27;code_gen&#x27;]</td></tr><tr><td><b>t2</b></td><td>coder</td><td><span class="badge" style="background:#16a34a">exact</span> <span class="badge" style="background:#dc2626">risk</span></td><td>能力声明未覆盖需求 [&#x27;translation&#x27;]</td></tr><tr><td><b>t3</b></td><td>translator</td><td><span class="badge" style="background:#16a34a">exact</span> </td><td>覆盖能力：[]</td></tr><tr><td><b>t4</b></td><td>analyst</td><td><span class="badge" style="background:#2563eb">capability</span> </td><td>能力覆盖 1/1：[&#x27;data_analysis&#x27;]</td></tr><tr><td><b>t5</b></td><td>translator</td><td><span class="badge" style="background:#f59e0b">degraded</span> </td><td>无匹配 agent（model=deepseek-chat, caps=[&#x27;video_editing&#x27;]），降级默认</td></tr><tr><td><b>t6a</b></td><td>flaky</td><td><span class="badge" style="background:#16a34a">exact</span> </td><td>覆盖能力：[]</td></tr><tr><td><b>t6b</b></td><td>flaky</td><td><span class="badge" style="background:#16a34a">exact</span> </td><td>覆盖能力：[]</td></tr><tr><td><b>t6c</b></td><td>flaky</td><td><span class="badge" style="background:#16a34a">exact</span> </td><td>覆盖能力：[]</td></tr><tr><td><b>t8</b></td><td>translator</td><td><span class="badge" style="background:#f59e0b">degraded</span> </td><td>无匹配 agent（model=deepseek-chat, caps=[]），降级默认</td></tr><tr><td><b>t9</b></td><td>translator</td><td><span class="badge" style="background:#f59e0b">degraded</span> </td><td>无匹配 agent（model=deepseek-chat, caps=[&#x27;weekly_report&#x27;]），降级默认</td></tr></tbody></table></div>
+<div class="card"><h2>失败传播与剪枝</h2><div class="prune-root"><span class="badge" style="background:#dc2626">根失败</span> <b>t6a</b> — fail_injected（重试 2 次耗尽）</div><div class="prune-item">✂ <b>t7</b> <span class="muted">(取消时 pending)</span> — downstream_chain</div><div class="prune-root"><span class="badge" style="background:#dc2626">根失败</span> <b>t6b</b> — fail_injected（重试 2 次耗尽）</div><div class="prune-root"><span class="badge" style="background:#dc2626">根失败</span> <b>t6c</b> — fail_injected（重试 2 次耗尽）</div></div>
+<div class="card"><h2>治理层</h2><div class="grid3"><div class="card"><h3>审计 <span class="badge" style="background:#f59e0b">warning</span></h3><ul><li>3 次剪枝（1 任务被剪）；3 次降级分配；1 个风险分配</li></ul></div><div class="card"><h3>成本</h3><ul><li>总成本：<b>$0.0024</b> (in 6240 + out 626 tokens)</li><li>失败消耗：$0.0007　剪枝取消消耗：$0.0000</li><li>exact：$0.0014</li><li>degraded：$0.0007</li><li>capability：$0.0003</li></ul></div><div class="card"><h3>学习规则（3）</h3><ul><li><b>FP-fail_injected</b> <span class="badge" style="background:#dc2626">high</span> <span class="muted">failure_pattern</span> — 错误码 fail_injected 出现 3 次：该类型任务反复失败，拆解时需规避或换 agent</li><li><b>DEG-1</b> <span class="badge" style="background:#f59e0b">medium</span> <span class="muted">degraded_assignment</span> — 3/10 任务降级分配（30%），拆解建议的 model 与注册表匹配度差</li><li><b>PRU-1</b> <span class="badge" style="background:#f59e0b">medium</span> <span class="muted">pruning_quality</span> — 3 次失败传播触发剪枝，共剪 1 个任务：拆解存在无意义并行或依赖过深</li></ul></div></div></div>
+<footer>由 scripts/smoke_multiagent.py --visual 生成 ·
+  <a href="https://github.com/hankwangcn/agents-orchestration">agents-orchestration</a></footer>
+</div></body></html>
