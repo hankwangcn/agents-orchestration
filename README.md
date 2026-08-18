@@ -211,6 +211,32 @@ ao resolve r1 t5 --action complete --result '{"task_id":"t5","success":true,"out
 ao resume r1                                    # 7) 断点恢复（需 state_store）
 ```
 
+**交互模式**：`ao` 不带子命令（或 `ao shell`）进入 REPL——逐行执行任意子命令，错误不退出会话，tab 补全 + 历史持久化（`~/.ao_history`）：
+
+```text
+ao> agents                                  # 查 agent 档案
+ao> submit                                  # 不带文件 → 引导式提问构建 DAG
+  任务 t1 描述: 把下面句子翻成英文: 你好世界
+  任务 t1 依赖 (逗号分隔, 可空):
+  任务 t2 描述: 总结上一步的翻译
+  任务 t2 依赖 (逗号分隔, 可空): t1
+  任务 t3 描述:                           # 回车结束收集
+共 2 个任务：
+  t1: 把下面句子翻成英文: 你好世界
+  t2: 总结上一步的翻译  deps: t1
+提交? [y/N]: y
+run_id: b4b65411222a
+ao> wait                                    # submit 后 run_id 自动记忆，免重复敲
+ao> report
+ao> resolve                                 # 缺 task_id/action 时逐项引导
+  task_id（run b4b65411222a，如 t1）: t2
+  action (complete/cancel/retry): complete
+  人工核实结果契约 JSON: {"task_id":"t2","success":true}
+ao> exit
+```
+
+交互要点：`submit` 成功即记忆 run_id，后续 `status/report/metrics/cancel/resume/wait/resolve` 均可省略；显式传参优先于会话记忆；`-u/--url` 在 REPL 入口指定后会话内复用。
+
 N 个 agent 只需一份配置文件，零代码注册——**只写"agent 在哪、叫什么模型"**，能力 / 并发上限 / 预算声明一条都不用配（那是 `info_request` 问出来的）：
 
 ```yaml
@@ -342,7 +368,7 @@ agents-orchestration/
 │   ├── smoke_multiagent.py   # 多 agent 全流程冒烟（真实 HTTP，无需 key）
 │   ├── smoke_deepseek.py     # 真实模型端到端冒烟（需 $DEEPSEEK_API_KEY）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 199 项测试（解析组件 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
+├── tests/                   # 217 项测试（解析组件 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告
 └── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
@@ -356,7 +382,7 @@ pip install -e ".[dev,gateway]"
 pytest        # 199/199 全绿
 ```
 
-测试覆盖重点：解析组件（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）。
+测试覆盖重点：解析组件（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）。
 
 ---
 
