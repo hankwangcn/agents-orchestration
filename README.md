@@ -212,6 +212,7 @@ export DEEPSEEK_API_KEY=sk-...
 - 4 个角色 agent（translator / coder / analyst / flaky）+ 11 任务 DAG
 - 覆盖：三级分配留痕（exact / capability / degraded）、能力不覆盖 risk 标记、解析层杂文兜底重试、任务重试耗尽 → 连续失败摘除 → 降级回退、反向可达剪枝（独立交付分支不误杀）、per-agent 并发上限真实生效（HTTP 并发峰值 ≤ 声明值）、usage 真实回填、审计 / 成本 / 学习
 - mock 支持确定性故障注入（HTTP 500 / 杂文 / 业务失败），独立运行：`.venv/bin/python scripts/mock_agents.py`
+- 可视化报告（DAG 执行全景图 / 三级分配留痕 / 失败传播 / 治理三栏）：`.venv/bin/python scripts/smoke_multiagent.py --visual`，示例报告见 [reports/smoke_multiagent_report.html](reports/smoke_multiagent_report.html)
 
 ---
 
