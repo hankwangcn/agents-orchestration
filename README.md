@@ -201,6 +201,18 @@ export DEEPSEEK_API_KEY=sk-...
 
 覆盖链路：`info_request` 能力采集 → 异步并发调度（2 并行 + 1 汇总）→ 双层校验解析 → 审计 / 成本 / 学习，验证真实 LLM 格式漂移下的解析兜底与真实 token / 耗时 / 成本回填。
 
+### 6. 多 agent 全流程冒烟（无需 API key / 真实 LLM）
+
+```bash
+.venv/bin/python scripts/smoke_multiagent.py
+```
+
+框架以客户端身份调用**本地 mock agent 服务**（`scripts/mock_agents.py`，OpenAI 兼容 chat completions 端点），传输层与真实 agent 完全一致（协议装配 → HTTP → 解析），差异仅在业务应答为脚本化：
+
+- 4 个角色 agent（translator / coder / analyst / flaky）+ 11 任务 DAG
+- 覆盖：三级分配留痕（exact / capability / degraded）、能力不覆盖 risk 标记、解析层杂文兜底重试、任务重试耗尽 → 连续失败摘除 → 降级回退、反向可达剪枝（独立交付分支不误杀）、per-agent 并发上限真实生效（HTTP 并发峰值 ≤ 声明值）、usage 真实回填、审计 / 成本 / 学习
+- mock 支持确定性故障注入（HTTP 500 / 杂文 / 业务失败），独立运行：`.venv/bin/python scripts/mock_agents.py`
+
 ---
 
 ## Agent 接入
@@ -256,8 +268,10 @@ agents-orchestration/
 │   ├── api/gateway.py       # API 网关：RunManager + FastAPI 端点
 │   └── adapters/            # Agent 适配器（base 抽象 同步/异步 + DeepSeek）
 ├── scripts/
-│   ├── smoke_deepseek.py    # 真实模型端到端冒烟
-│   └── smoke_resume.py      # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
+│   ├── mock_agents.py        # 本地 OpenAI 兼容 mock agent 服务（多角色 + 故障注入）
+│   ├── smoke_multiagent.py   # 多 agent 全流程冒烟（真实 HTTP，无需 key）
+│   ├── smoke_deepseek.py     # 真实模型端到端冒烟（需 $DEEPSEEK_API_KEY）
+│   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
 ├── tests/                   # 168 项测试（解析组件 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图
 └── pyproject.toml
