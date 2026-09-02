@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-08-15
-> 状态：已实现（阶段一至四全部完成 + 断点持久化增强，168/168 测试全绿）
+> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固，221/221 测试全绿）
 
 ---
 
@@ -297,13 +297,14 @@ flowchart LR
 - [x] **阶段三：资源统计与任务分配**（2026-08-15 完成）— 能力注册表 + info_request 采集 + 多 agent 资源协调 + 任务分配 — 实现：`AgentRegistry`（orchestration/registry.py），能力/资源/约束经 info_request 采集解析入库（可刷新，单点失败隔离）；分配三级策略全程留痕（`Assignment`：exact 精确 model 匹配（同 model 多实例轮询）→ capability 能力匹配（部分覆盖标记 risk）→ degraded 降级默认通用 LLM（显式留痕，默认不可用回退任意可用 agent）；连续任务失败达到阈值自动摘除（best-effort）；`Task.required_capabilities` 由拆解层声明。测试 76/76 全绿，见 §10
 - [x] **阶段二：治理与学习**（2026-08-15 完成）— 审计器 + 成本核算 + 自我学习规则提取 — 实现：`Auditor`（orchestration/audit.py）——正确性对账（状态 vs 结果契约矛盾/缺失契约/晚到结果）、分配审计（降级/风险留痕消费）、剪枝审计（§5.4 取消报告归集）、语义交叉校验（§7.5 副作用声明 vs 报告）、错误模式归集，verdict 三级判定（ok/warning/critical）；`CostAccountant`（orchestration/cost.py）——按 agent/匹配类型归集成本与 token、失败成本与剪枝已发生消耗单独暴露（§5.4 口径）、预算超支判定（声明 0 不判）；`LearningEngine`（orchestration/learning.py）——启发式规则提取（REC/FP/DEG/CAP/BUG/PRU 六类，阈值可配，证据+动作建议），供拆解优化闭环消费。测试 115/115 全绿，见 §10
 - [x] **阶段四：并发执行模型**（2026-08-15 完成，依赖阶段三）— asyncio 并发调度 + 多模型接入 + 可观测性 + API 网关 — 实现：
-  - `AsyncScheduler`（orchestration/scheduler_async.py）——事件驱动并发派发（FIRST_COMPLETED 持续推进）；**资源限制执行**（阶段三从统计走向执行）：per-agent 并发上限（Semaphore，max_concurrency）+ 滑动窗口限速（rate_limit_per_min，0=不限）；**竞态处理**（§5.3）：失败 → 冻结新派发 → 剪枝 → 对 RUNNING 任务逐级下发取消（best-effort）→ 等待全部 in-flight 收尾 → 解冻；**晚到结果直接丢弃**（不写 task.result、不计健康度、不计成本）；执行期间被剪枝立即停止重试（不烧钱）；外部取消（cancel_event → 整棵取消，final_status=cancelled，已完成任务不回收）；**多 run 并发隔离**（_RunCtx：运行状态全在 per-run 上下文，同一实例可并发跑多个 DAG）
+  - `AsyncScheduler`（orchestration/scheduler_async.py）——事件驱动并发派发（FIRST_COMPLETED 持续推进）；**资源限制执行**（阶段三从统计走向执行）：per-agent 并发上限（Semaphore，max_concurrency）+ 滑动窗口限速（rate_limit_per_min，0=不限，时间戳队列实现，窗口边界无 2×limit 突发）；**配额阻塞 ≠ 不可达**：ready 任务因并发槽被其他 run 占用（RunManager 共用单实例，_sems 跨 run 共享）→ 短暂等待槽位释放后重派，仅依赖失败/取消导致确实无可派发才防御性 SKIPPED；**竞态处理**（§5.3）：失败 → 冻结新派发 → 剪枝 → 对 RUNNING 任务逐级下发取消（best-effort）→ 等待全部 in-flight 收尾 → 解冻；**晚到结果直接丢弃**（不写 task.result、不计健康度、不计成本）；执行期间被剪枝立即停止重试（不烧钱）；外部取消（cancel_event → 整棵取消，final_status=cancelled，已完成任务不回收）；**多 run 并发隔离**（_RunCtx：运行状态全在 per-run 上下文，同一实例可并发跑多个 DAG）
   - adapter 异步化（adapters/base.py）——`arun_task/arun_info/acancel` 异步路径，默认 `_acall_llm` 线程化（asyncio.to_thread），只有同步实现的 adapter 零改动即可被并发调度；`DeepSeekAdapter` override `_acall_llm` 用 AsyncOpenAI 真异步；解析重试异步版 `aparse_result`（validation.py）；**真实元数据回填**（冒烟实测修正）：真实 LLM 不自报 usage，`_post_process` 钩子（contextvars 协程隔离）从 API 响应捕获 token/耗时回填 Result，DeepSeek 单价表在适配器内维护
   - 可观测性（orchestration/metrics.py）——`MetricsCollector` 指标聚合（按 run_id 隔离：任务/成功/失败/取消/剪枝/成本/耗时/agent 成功率/峰值并发/降级数）+ 结构化日志（key=value formatter）
   - API 网关（orchestration/api/gateway.py）——FastAPI REST：`POST /api/runs` 提交 DAG（后台执行）、`GET /api/runs/{id}` 进度快照、`GET /api/runs/{id}/report` 收尾报告（含审计数据源）、`GET /api/runs/{id}/metrics`、`POST /api/runs/{id}/cancel`、`GET /api/agents`；`RunManager` 管理 run 生命周期（编程式 `submit/wait/report/cancel`）
   - `ScheduleReport` 上移至 models.py——同步/异步调度器共用同一契约，阶段二审计/成本/学习直接消费（已冒烟验证：AsyncScheduler 报告 → Auditor/CostAccountant/LearningEngine 全链路）
   - 测试 151/151 全绿，见 §10
 - [x] **断点持久化增强**（2026-08-15 完成，独立于四阶段）— 见 §5.5 — 实现：`SqliteStateStore`（orchestration/state_store.py，事件驱动落盘 + assignments/prune 表）、`AsyncScheduler.resume_run`（A+B 恢复策略 + SKIPPED 依赖恢复 + seed 注入复用已完成结果）、网关 `resume`/`resolve` 端点、审计 INTERRUPTED 标记 + 学习 INT-1 规则。冒烟（scripts/smoke_resume.py）实测：无副作用任务执行中崩溃 → 恢复重派续跑；副作用任务执行中崩溃 → INTERRUPTED → 人工 complete → 续跑。修复关键缺陷：任务启动 RUNNING 未落盘（副作用任务崩溃恢复会被当普通任务重派）。测试 168/168 全绿，见 §10
+- [x] **代码审查修复：多 run 并发加固 + 一致性收尾**（2026-09-02 完成）— ①AsyncScheduler 派发循环：ready 任务因 per-agent 并发槽被其他 run 占用（RunManager 共用单 AsyncScheduler，_sems 跨 run 共享）时等待槽位释放后重派——原缺陷把配额阻塞误判为依赖失败不可达，并发提交的 run 全任务误标 SKIPPED 且 final_status=success 静默丢交付（回归：test_scheduler_async.py::TestMultiRunQuota）；②metrics 峰值并发按 agent 记账（原把全 DAG 的 RUNNING 数虚记到单 agent 名下，多 agent 并行时 peak_concurrency 虚高）；③`_RateLimiter` 落地为真滑动窗口（时间戳队列，窗口边界无 2×limit 突发，实现与文档口径一致）；④REPL 非 CliError 异常（submit 文件不存在/JSON 损坏等 OSError/json.JSONDecodeError）报错不退出会话（回归：test_cli_shell.py::test_non_cli_error_does_not_exit_session）；⑤pyflakes 清零（未使用导入 ×5、未使用变量 ×2、f-string ×3），visualize_report agent 摘除徽标 literal-brace 显示缺陷顺带修复。测试 221/221 全绿，见 §10
 
 ---
 

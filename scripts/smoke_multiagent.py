@@ -44,7 +44,7 @@ from orchestration.models import DAG, ResourceRequirement, Task, TaskStatus
 from orchestration.registry import AgentRegistry
 from orchestration.scheduler_async import AsyncScheduler
 
-from mock_agents import MockAgentConfig, MockAgentServer, default_configs
+from mock_agents import MockAgentServer, default_configs
 
 
 def build_dag() -> DAG:

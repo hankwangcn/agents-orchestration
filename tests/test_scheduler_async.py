@@ -374,3 +374,84 @@ class TestObservability:
         assert m.tasks_success == 1
         assert m.pruned_count >= 1
         assert m.final_status == "failed"
+
+    def test_peak_concurrency_counted_per_agent(self):
+        """metrics 并发峰值按 agent 记账——跨 agent 并行不互相计入。
+
+        回归（P3）：_execute_task 曾把全 DAG 的 RUNNING 数（含其他
+        agent 的任务）记到单 agent 名下：3 任务并行时 agent_001 峰值
+        虚报 3（实际自己只有 2）。
+        """
+        metrics = MetricsCollector()
+        a1 = AsyncScriptedAdapter({"a": [ok("a")], "c": [ok("c")]}, delay=0.1)
+        a2 = AsyncScriptedAdapter({"b": [ok("b")]}, delay=0.1)
+        # 任务声明不同 model → exact 匹配确定归属：a/c→agent_001，b→agent_002
+        dag = DAG(tasks={
+            "a": Task(id="a", desc="a",
+                      required_resources=ResourceRequirement(model="m1")),
+            "b": Task(id="b", desc="b",
+                      required_resources=ResourceRequirement(model="m2")),
+            "c": Task(id="c", desc="c",
+                      required_resources=ResourceRequirement(model="m1")),
+        })
+        sched, reg = make_scheduler(a1, a2, metrics=metrics)
+        reg.get("agent_001").model = "m1"
+        reg.get("agent_002").model = "m2"
+        reg.get("agent_001").max_concurrency = 2
+        reg.get("agent_002").max_concurrency = 2
+        run(sched, dag)
+
+        am1 = metrics.run("run_1").agents["agent_001"]
+        am2 = metrics.run("run_1").agents["agent_002"]
+        assert am1.peak_concurrency == 2  # 修复前：全 DAG RUNNING=3 虚记
+        assert am2.peak_concurrency == 1
+
+
+# ---------------------------------------------------------------------------
+# 多 run 并发配额（P1 回归）
+# ---------------------------------------------------------------------------
+
+class TestMultiRunQuota:
+    """网关 RunManager 共用单 AsyncScheduler（_sems 跨 run 共享）场景。"""
+
+    def test_quota_blocked_run_waits_not_skipped(self):
+        """并发槽被 run A 占满 → run B 等待槽位释放后续跑，不误标 SKIPPED。
+
+        回归（P1）：派发轮曾把「配额阻塞」误判为「依赖失败不可达」——
+        B 的 ready 任务全部被 _has_quota 跳过后落入 _mark_skipped 分支，
+        任务误标 SKIPPED 且 final_status=success，静默丢交付。
+        正确行为：等待槽位释放（其他 run 收尾）后正常派发执行。
+        """
+
+        async def scenario():
+            adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
+            adapter.script_delay["a"] = 0.4  # a 慢任务：占住 agent_001 并发槽
+            sched, reg = make_scheduler(adapter)
+            reg.get("agent_001").max_concurrency = 1
+
+            dag_a = dag_of(("a", []))
+            dag_b = dag_of(("b", []))
+            t_a = asyncio.create_task(sched.run(dag_a, run_id="run_A"))
+            await asyncio.sleep(0.15)  # a 已 RUNNING → 槽被 run A 占用
+            report_b = await sched.run(dag_b, run_id="run_B")
+            report_a = await t_a
+            return report_a, report_b, dag_b
+
+        report_a, report_b, dag_b = asyncio.run(scenario())
+
+        assert report_a.final_status == "success"
+        # 修复前：b 被误标 SKIPPED，final_status 仍 success（静默丢交付）
+        assert dag_b.tasks["b"].status == TaskStatus.SUCCESS
+        assert report_b.final_status == "success"
+        assert report_b.results["b"].success
+
+    def test_unreachable_pending_still_skipped(self):
+        """依赖已终态（CANCELLED）的 PENDING 任务无可派发 → 仍走防御性
+        SKIPPED（原语义不变，只是不再吞掉配额阻塞场景）。"""
+        dag = dag_of(("a", []), ("b", ["a"]))
+        dag.tasks["a"].status = TaskStatus.CANCELLED  # 预置：依赖已取消
+        adapter = AsyncScriptedAdapter({})
+        sched, _ = make_scheduler(adapter)
+        run(sched, dag)
+
+        assert dag.tasks["b"].status == TaskStatus.SKIPPED

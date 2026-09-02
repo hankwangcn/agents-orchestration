@@ -47,10 +47,10 @@ async def scenario1_pure_rerun(store: SqliteStateStore) -> None:
     reg.register(adapter)
     sched = AsyncScheduler(registry=reg, state_store=store)
 
-    task = asyncio.create_task(sched.run(dag, run_id="s1"))
+    asyncio.get_running_loop().create_task(sched.run(dag, run_id="s1"))
     await asyncio.sleep(0.05)  # a 正在执行（delay 0.15）→ RUNNING 已落盘
     await crash_while_running()
-    print(f"[S1] 崩溃时 a=running（无副作用）→ store 已落盘 RUNNING")
+    print("[S1] 崩溃时 a=running（无副作用）→ store 已落盘 RUNNING")
 
     # 重启：全新调度器 + 同一 store
     sched2 = AsyncScheduler(registry=reg, state_store=store)
@@ -84,10 +84,10 @@ async def scenario2_side_effect_interrupted(store: SqliteStateStore) -> None:
     reg.register(adapter)
     sched = AsyncScheduler(registry=reg, state_store=store)
 
-    task = asyncio.create_task(sched.run(dag, run_id="s2"))
+    asyncio.get_running_loop().create_task(sched.run(dag, run_id="s2"))
     await asyncio.sleep(0.1)  # a 已成功（0.05），b（副作用）正在执行 → RUNNING 已落盘
     await crash_while_running()
-    print(f"[S2] 崩溃时 b=running（声明副作用）→ store 已落盘 RUNNING")
+    print("[S2] 崩溃时 b=running（声明副作用）→ store 已落盘 RUNNING")
 
     sched2 = AsyncScheduler(registry=reg, state_store=store)
     b_calls_before = [c[0] for c in adapter.calls].count("b")

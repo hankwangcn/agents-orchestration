@@ -91,6 +91,24 @@ class TestReplSession:
         assert rc == 0
         assert "done" in capsys.readouterr().out
 
+    def test_non_cli_error_does_not_exit_session(self, capsys):
+        """命令实现抛出任意异常（如文件不存在）→ 报错但会话继续。
+
+        回归（P2）：_repl 此前只捕获 CliError/KeyboardInterrupt，
+        cmd_submit 的 open() 抛 FileNotFoundError 会穿透循环整场退出
+        （rc=1），违背"错误不退出会话"承诺。
+        """
+        inputs = ["submit /no/such/file.json", "status r1", "exit"]
+        with mock.patch("builtins.input", side_effect=inputs), \
+             mock.patch("orchestration.cli._request",
+                        side_effect=_dispatch({"/api/runs/r1": SNAP})):
+            rc = cli.main([])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "FileNotFoundError" in captured.err
+        assert "错误" in captured.err
+        assert "done" in captured.out  # 出错后的 status 正常执行 → 会话存活
+
     def test_help_output(self, capsys):
         with mock.patch("builtins.input", side_effect=["help", "exit"]):
             rc = cli.main([])

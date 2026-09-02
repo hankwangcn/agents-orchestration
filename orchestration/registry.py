@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Optional, Union
 
-from pydantic import BaseModel
 
 from .adapters.base import AgentAdapter
 from .models import Assignment, Task

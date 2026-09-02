@@ -450,6 +450,10 @@ def _repl(url: str | None = None) -> int:
             print(f"错误：{e}", file=sys.stderr)
         except KeyboardInterrupt:
             print("\n已中断")
+        except Exception as e:
+            # 命令实现抛出的任意异常（文件不存在/JSON 损坏/网络栈错误等）
+            # 都不退出会话——REPL 仅在 exit/quit/EOF/Ctrl-C 时结束
+            print(f"错误：{type(e).__name__}: {e}", file=sys.stderr)
     return 0
 
 

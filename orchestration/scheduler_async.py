@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -63,28 +64,29 @@ class _RunCtx:
 
 
 class _RateLimiter:
-    """per-agent 固定窗口限速（rate_limit_per_min）。limit<=0 表示不限。"""
+    """per-agent 滑动窗口限速（rate_limit_per_min）。limit<=0 表示不限。
+
+    滑动窗口（非固定窗口）：按最近 window_seconds 内的调用时间戳计数，
+    窗口边界处不会出现 2×limit 突发；超限时等待最早一次调用滑出窗口。
+    """
 
     def __init__(self, limit_per_min: int, window_seconds: float = 60.0):
         self.limit = limit_per_min
         self.window = window_seconds
-        self._window_start = 0.0
-        self._count = 0
+        self._hits: deque[float] = deque()
 
     async def acquire(self) -> None:
         if self.limit <= 0:
             return
-        now = time.monotonic()
-        if now - self._window_start >= self.window:
-            self._window_start = now
-            self._count = 0
-        if self._count >= self.limit:
-            wait = self.window - (now - self._window_start)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._window_start = time.monotonic()
-            self._count = 0
-        self._count += 1
+        while True:
+            now = time.monotonic()
+            while self._hits and now - self._hits[0] >= self.window:
+                self._hits.popleft()
+            if len(self._hits) < self.limit:
+                self._hits.append(now)
+                return
+            # 窗口已满：等最早一次调用滑出窗口后重试
+            await asyncio.sleep(max(self.window - (now - self._hits[0]), 0.005))
 
 
 class AsyncScheduler:
@@ -148,6 +150,7 @@ class AsyncScheduler:
                 break
 
             # 派发阶段：全部 ready 并行派发（未冻结时）
+            quota_blocked = False  # ready 任务因并发槽被占未派发（≠不可达）
             if not frozen:
                 for tid in dag.ready_tasks():
                     if tid in pending:
@@ -156,6 +159,7 @@ class AsyncScheduler:
                     ctx.assignments[tid] = assignment
                     ctx.task_agent[tid] = assignment.agent_id
                     if not self._has_quota(assignment):  # 并发上限（非阻塞）
+                        quota_blocked = True
                         continue
                     pending[tid] = asyncio.create_task(
                         self._execute_task(ctx, tid, assignment, adapter)
@@ -171,7 +175,14 @@ class AsyncScheduler:
                     )
 
             if not pending:
-                # 无 in-flight：依赖失败/取消导致不可达 → 防御性跳过
+                if quota_blocked:
+                    # 并发槽被其他 run 占用（网关 RunManager 共用单实例，
+                    # _sems 跨 run 共享）：等待槽位释放后重试派发——任务仍
+                    # 可执行，不能走下方 SKIPPED 分支（否则并发提交的 run
+                    # 被误标 SKIPPED 且 final_status=success 静默丢交付）
+                    await asyncio.sleep(0.05)
+                    continue
+                # 无 in-flight 且无可派发：依赖失败/取消导致不可达 → 防御性跳过
                 skipped = self._mark_skipped(dag)
                 if self._metrics and skipped:
                     self._metrics.skipped(run_id, skipped)
@@ -369,6 +380,7 @@ class AsyncScheduler:
                 cur = sum(
                     1 for t in ctx.dag.tasks.values()
                     if t.status == TaskStatus.RUNNING
+                    and ctx.task_agent.get(t.id) == agent.agent_id
                 )
                 self._metrics.task_concurrency(
                     ctx.run_id, agent.agent_id, cur

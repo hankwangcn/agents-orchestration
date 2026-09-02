@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-199%2F199%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-221%2F221%20passing-brightgreen)](tests/)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不监控 agent 内部状态。**
 
@@ -368,7 +368,7 @@ agents-orchestration/
 │   ├── smoke_multiagent.py   # 多 agent 全流程冒烟（真实 HTTP，无需 key）
 │   ├── smoke_deepseek.py     # 真实模型端到端冒烟（需 $DEEPSEEK_API_KEY）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 217 项测试（解析组件 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
+├── tests/                   # 221 项测试（解析组件 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告
 └── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
@@ -379,7 +379,7 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 199/199 全绿
+pytest        # 221/221 全绿
 ```
 
 测试覆盖重点：解析组件（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）。

@@ -213,7 +213,6 @@ def _summary(report: Any, audit: Any, cost: Any, duration_s: float, ok: bool) ->
     counts: dict[str, int] = {}
     for t in tasks.values():
         counts[t.status.value] = counts.get(t.status.value, 0) + 1
-    n = len(tasks)
     cells = [
         ("最终状态", report.final_status, VERDICT_COLOR.get(
             report.final_status, "#64748b")),
@@ -242,7 +241,7 @@ def _agent_table(agent_meta: dict, agent_stats: dict) -> str:
         st_badge = (f'<span class="badge" style="background:#dc2626">已摘除 '
                     f'(连续失败 {m.get("consecutive_failures", 0)})</span>'
                     if status == "unavailable" else
-                    f'<span class="badge" style="background:#16a34a">正常</span>')
+                    '<span class="badge" style="background:#16a34a">正常</span>')
         rows += (
             "<tr>"
             f'<td><b>{_esc(aid)}</b></td>'
