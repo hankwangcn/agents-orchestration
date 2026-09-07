@@ -136,6 +136,32 @@ class TestCollect:
         assert agent.max_concurrency == 5
         assert agent.capabilities == []  # 未采集的 scope 保持空
 
+    def test_constraint_time_windows_not_pollute_forbidden(self):
+        """q1 混合回答分流：时间窗归 time_windows，不混入 forbidden。"""
+        decl = {
+            "constraint": {
+                "q1": "工作时间 9点~18点；禁止访问外网; 输出必须是JSON",
+                "q2": "Python, SQL",
+            },
+        }
+        reg = AgentRegistry()
+        aid = reg.register(InfoAdapter(declarations=decl))
+        reg.collect(agent_id=aid, scope="constraint")
+        agent = reg.get(aid)
+        assert agent.time_windows == ["工作时间 9点~18点"]
+        assert agent.forbidden == ["禁止访问外网", "输出必须是JSON"]
+        assert agent.languages == ["Python", "SQL"]
+
+    def test_constraint_none_and_blank_excluded(self):
+        """『无』（含空白变体）与空回答不计入 forbidden/time_windows。"""
+        for raw in ("无", " 无 "):
+            reg = AgentRegistry()
+            aid = reg.register(InfoAdapter(declarations={"constraint": {"q1": raw}}))
+            reg.collect(agent_id=aid, scope="constraint")
+            agent = reg.get(aid)
+            assert agent.forbidden == []
+            assert agent.time_windows == []
+
     def test_collect_failure_is_isolated(self):
         """单 scope 采集失败不中断，摘要留痕。"""
         reg = AgentRegistry()

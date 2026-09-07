@@ -306,14 +306,15 @@ class RunManager:
             raise HTTPException(status_code=404, detail=f"run 不存在：{run_id}")
         return handle
 
-    @staticmethod
-    def _task_agent(handle: RunHandle, tid: str) -> str:
-        if handle.report is None:
+    def _task_agent(self, handle: RunHandle, tid: str) -> str:
+        if handle.report is not None:
+            for a in handle.report.assignments:
+                if a.task_id == tid:
+                    return a.agent_id
             return ""
-        for a in handle.report.assignments:
-            if a.task_id == tid:
-                return a.agent_id
-        return ""
+        # 运行中（report 仅收尾后生成）：从调度器 live 分配映射读，
+        # 避免运行中快照 tasks[].agent 恒为空
+        return self._scheduler.task_agents(handle.run_id).get(tid, "")
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-08-15
-> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固，221/221 测试全绿）
+> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固，224/224 测试全绿）
 
 ---
 
@@ -305,6 +305,7 @@ flowchart LR
   - 测试 151/151 全绿，见 §10
 - [x] **断点持久化增强**（2026-08-15 完成，独立于四阶段）— 见 §5.5 — 实现：`SqliteStateStore`（orchestration/state_store.py，事件驱动落盘 + assignments/prune 表）、`AsyncScheduler.resume_run`（A+B 恢复策略 + SKIPPED 依赖恢复 + seed 注入复用已完成结果）、网关 `resume`/`resolve` 端点、审计 INTERRUPTED 标记 + 学习 INT-1 规则。冒烟（scripts/smoke_resume.py）实测：无副作用任务执行中崩溃 → 恢复重派续跑；副作用任务执行中崩溃 → INTERRUPTED → 人工 complete → 续跑。修复关键缺陷：任务启动 RUNNING 未落盘（副作用任务崩溃恢复会被当普通任务重派）。测试 168/168 全绿，见 §10
 - [x] **代码审查修复：多 run 并发加固 + 一致性收尾**（2026-09-02 完成）— ①AsyncScheduler 派发循环：ready 任务因 per-agent 并发槽被其他 run 占用（RunManager 共用单 AsyncScheduler，_sems 跨 run 共享）时等待槽位释放后重派——原缺陷把配额阻塞误判为依赖失败不可达，并发提交的 run 全任务误标 SKIPPED 且 final_status=success 静默丢交付（回归：test_scheduler_async.py::TestMultiRunQuota）；②metrics 峰值并发按 agent 记账（原把全 DAG 的 RUNNING 数虚记到单 agent 名下，多 agent 并行时 peak_concurrency 虚高）；③`_RateLimiter` 落地为真滑动窗口（时间戳队列，窗口边界无 2×limit 突发，实现与文档口径一致）；④REPL 非 CliError 异常（submit 文件不存在/JSON 损坏等 OSError/json.JSONDecodeError）报错不退出会话（回归：test_cli_shell.py::test_non_cli_error_does_not_exit_session）；⑤pyflakes 清零（未使用导入 ×5、未使用变量 ×2、f-string ×3），visualize_report agent 摘除徽标 literal-brace 显示缺陷顺带修复。测试 221/221 全绿，见 §10
+- [x] **一致性收尾补遗：constraint 分流 + 运行中快照 agent**（2026-09-07 完成）— ①constraint 采集分流（registry.py）：q1 为混合自由文本（如"工作时间 9点~18点；禁止访问外网"），原实现整段扫入 forbidden——时间窗短语污染约束匹配/审计/学习规则的输入口径；现按 `_is_time_window`（~/点/window/时间窗）分流归 time_windows，"无"（含空白变体）不计入任何一方（回归：test_registry.py::TestCollect 两项）；②网关运行中快照 agent 字段（gateway.py + scheduler_async.py）：原 `_task_agent` 依赖 ScheduleReport（仅收尾后生成），运行中/RUNNING 快照 tasks[].agent 恒空串；现 AsyncScheduler 托管 live 分配映射（run 注册/_run_loop finally 注销，异常路径不留幽灵状态），新增 `task_agents(run_id)` 查询，网关运行中从 live 映射读取——任务派发即有归属（回归：test_gateway.py::test_running_snapshot_has_agent）。测试 224/224 全绿，见 §10
 
 ---
 

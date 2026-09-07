@@ -45,6 +45,26 @@ class TestRunManager:
         # 快照任务初始状态：a 已派发或完成
         assert all(t["id"] in ("a", "b") for t in snap["tasks"])
 
+    def test_running_snapshot_has_agent(self):
+        """运行中快照 tasks[].agent 非空：任务派发即有归属，不等收尾报告。"""
+        dag = DAG(tasks={
+            "a": Task(id="a", desc="a"),
+            "b": Task(id="b", desc="b", deps=["a"]),
+        })
+        adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]}, delay=0.3)
+        reg = AgentRegistry()
+        aid = reg.register(adapter)
+        manager = RunManager(registry=reg)
+
+        async def _flow():
+            rid = await manager.submit(dag)
+            await asyncio.sleep(0.1)  # a 已派发执行中，run 未结束
+            snap = manager.snapshot(rid)
+            return {t["id"]: t["agent"] for t in snap["tasks"]}
+
+        agents = asyncio.run(_flow())
+        assert agents["a"] == aid
+
     def test_report_while_running_conflict(self):
         """running 中取报告 → 409。"""
         dag = DAG(tasks={"a": Task(id="a", desc="a")})

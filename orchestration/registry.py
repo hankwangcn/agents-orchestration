@@ -83,6 +83,15 @@ def _split_tags(text: str) -> list[str]:
     return [t.strip() for t in tags if t.strip()]
 
 
+def _is_time_window(tag: str) -> bool:
+    """约束标签是否为时间窗描述（如"工作时间 9点~18点"）。
+
+    用于 constraint 分流：时间窗归 time_windows，不混入 forbidden。
+    """
+    t = (tag or "").lower()
+    return "~" in t or "点" in t or "window" in t or "时间窗" in t
+
+
 def _first_number(text: str) -> float:
     """从文本提取第一个数字（容错：agent 可能回答"5 个"）。"""
     m = re.search(r"\d+(?:\.\d+)?", text or "")
@@ -211,9 +220,17 @@ class AgentRegistry:
             agent.rate_limit_per_min = int(_first_number(q(2)))
             agent.budget_limit_usd = _first_number(q(3))
         elif scope == "constraint":
-            raw = q(1)
-            agent.forbidden = _split_tags(raw) if raw != "无" else []
-            agent.time_windows = [t for t in _split_tags(q(1)) if "~" in t or "点" in t or "window" in t.lower()]
+            # q1 是混合自由文本（如"工作时间 9点~18点；禁止访问外网"）：
+            # 时间窗短语归 time_windows，不扫入 forbidden——forbidden 是
+            # 约束匹配/审计/学习规则的输入，混入时间窗会污染判定口径；
+            # "无"（含空白变体）不计入任何一方
+            agent.time_windows = []
+            agent.forbidden = []
+            for t in _split_tags(q(1)):
+                if _is_time_window(t):
+                    agent.time_windows.append(t)
+                elif t != "无":
+                    agent.forbidden.append(t)
             agent.languages = _split_tags(q(2))
 
     # ---------- 分配（三级策略 + 多实例轮询） ----------

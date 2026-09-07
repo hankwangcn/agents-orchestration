@@ -114,6 +114,9 @@ class AsyncScheduler:
         # per-agent 资源（跨 run 共享：agent 池是全局的）
         self._sems: dict[str, asyncio.Semaphore] = {}
         self._ratelim: dict[str, _RateLimiter] = {}
+        # 运行中 run 的 live 状态（run_id → _RunCtx）：供网关运行中快照
+        # 读取 task→agent 分配（ScheduleReport 仅收尾后生成）
+        self._live: dict[str, _RunCtx] = {}
 
     # ------------------------------------------------------------------
 
@@ -135,6 +138,20 @@ class AsyncScheduler:
             ctx.assignments = dict(seed.get("assignments") or {})
             ctx.prune_reports = list(seed.get("prune_reports") or [])
             ctx.results = dict(seed.get("results") or {})
+        self._live[run_id] = ctx
+        try:
+            return await self._run_loop(ctx, dag, cancel_event)
+        finally:
+            self._live.pop(run_id, None)  # 异常路径也注销，不留幽灵 live 状态
+
+    async def _run_loop(
+        self,
+        ctx: _RunCtx,
+        dag: DAG,
+        cancel_event: Optional[asyncio.Event],
+    ) -> ScheduleReport:
+        """调度主循环（run 的执行体；live 注册/注销由 run 托管）。"""
+        run_id = ctx.run_id
         pending: dict[str, asyncio.Task] = {}
         frozen = False
 
@@ -246,6 +263,19 @@ class AsyncScheduler:
         if self._store is not None:
             self._store.save_report(run_id, report)
         return report
+
+    # ------------------------------------------------------------------
+    # live 查询（运行中快照）
+    # ------------------------------------------------------------------
+
+    def task_agents(self, run_id: str) -> dict[str, str]:
+        """运行中 run 的 live 分配映射 {task_id: agent_id}。
+
+        网关进度快照在 run 结束前取不到 ScheduleReport（仅收尾后生成），
+        运行中的 task→agent 从这里读；run 结束/未运行返回空 dict。
+        """
+        ctx = self._live.get(run_id)
+        return dict(ctx.task_agent) if ctx else {}
 
     # ------------------------------------------------------------------
     # 断点持久化 / 恢复
