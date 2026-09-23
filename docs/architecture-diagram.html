@@ -372,21 +372,28 @@
       <div class="layer-head">
         <span class="layer-badge" style="--lc:#4d7c0f">学习层</span>
         <span class="layer-en">LEARN</span>
-        <span class="layer-desc">复盘失败与低效，沉淀规则反哺拆解与分配</span>
+        <span class="layer-desc">确定性复盘 → 证据分级 → 跨 run 经验库 → 回馈拆解提示词</span>
       </div>
       <div class="layer-body">
         <div class="card">
           <div class="badge" style="--cc:#4d7c0f">学习</div>
           <div class="card-main">
             <div class="card-title">学习引擎 <span class="path">orchestration/learning.py</span></div>
-            <div class="card-desc">启发式规则提取，阈值可配，产出「证据 + 动作建议」：REC（解析组件排查）/ FP（错误码频发换 agent）/ DEG（降级占比高，核对拆解建议）/ CAP（风险分配失败率高，重采能力）/ BUG（超预算）/ PRU（剪枝复盘拆解并行度）/ INT（断点中断待人工）/ JUD（目标未达成 / 判定链路故障）。</div>
+            <div class="card-desc">run 收尾对同一份报告做<b>只读复盘</b>（审计事实 + 成本事实 + 判定结论），产出「证据 + 动作建议」：REC（解析组件排查）/ FP（错误码频发换 agent）/ DEG（降级占比高，核对拆解建议）/ CAP（风险分配失败率高，重采能力）/ BUG（超预算）/ PRU（剪枝复盘拆解并行度）/ INT（断点中断待人工）/ JUD（目标未达成 / 判定链路故障）。规则带<b>证据强度分级</b>：<span class="path">objective</span>（确定性事实，只读可复跑）与 <span class="path">judgment</span>（LLM 判定，非确定有成本）<b>禁止同级呈现</b>。学习层是复盘不是主链路——异常一律隔离，不阻断 run 收尾。</div>
           </div>
         </div>
         <div class="card">
           <div class="badge" style="--cc:#4d7c0f">规则</div>
           <div class="card-main">
-            <div class="card-title">规则库 / 经验库</div>
-            <div class="card-desc">规则带证据链与动作建议，为拆解策略优化、能力声明重采、预算校准提供闭环接口——反馈虚线见右侧。</div>
+            <div class="card-title">经验库 <span class="path">orchestration/lessons.py</span></div>
+            <div class="card-desc"><b>跨 run 记忆</b>：规则落盘 SQLite（<span class="path">learning_lessons</span> 表，同 run 重跑幂等），按 rule_id 聚合<b>命中次数 / 贡献 run 数 / 最高 severity / 最近证据</b>——单 run 阈值意义有限，<b>跨 run 复现才是客观支撑</b>。视图出口 <span class="path">GET /api/lessons</span> / <span class="path">ao lessons</span>。</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="badge" style="--cc:#4d7c0f">回馈</div>
+          <div class="card-main">
+            <div class="card-title">提示词顾问 <span class="path">PromptAdvisor.guidance</span></div>
+            <div class="card-desc"><b>闭环出口 = 拆解提示词</b>：注入「固定指令 → 〔学习层指导块〕 → 用户目标」的中间块——① 注册表实测事实（可用模型 / 已注册能力标签，直接测量无门槛，直击降级与能力风险）；② <b>复现达标</b>的客观规则（<span class="path">min_occurrences</span> 默认 2，每条恒带「既往 N 次运行命中 M 次」数值支撑与建议动作）；③ 判定结论<b>单独成节并标注非确定来源</b>。provider 缺失/异常一律退化为不注入，学习层故障不拖垮拆解。</div>
           </div>
         </div>
       </div>
@@ -396,8 +403,8 @@
 
   <!-- ================= 学习反馈闭环（右侧虚线） ================= -->
   <div class="col-fb">
-    <div class="fb-tag">规则反馈 · 优化拆解策略</div>
-    <div class="fb-sub">反哺规划层与资源分配</div>
+    <div class="fb-tag">经验回馈 · 优化拆解提示词</div>
+    <div class="fb-sub">跨 run 复现规则 → 建议块注入规划层</div>
     <svg class="fb-svg" viewBox="0 0 44 400" preserveAspectRatio="none">
       <line x1="22" y1="26" x2="22" y2="360" stroke="#7c3aed" stroke-width="2.4" stroke-dasharray="7 5"/>
       <path d="M22 30 L16 46 M22 30 L28 46" stroke="#7c3aed" stroke-width="2.4" fill="none" stroke-linecap="round"/>
@@ -409,7 +416,7 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v1.9 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固 + 规划层接入与切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语）+ 执行层详细设计①②（output_schema 强校验 / info 采集超时）+ 治理层详细设计①（反思/判定：run 级目标 + 独立 judge）（目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习 → 崩溃恢复）· 387/387 测试全绿
+  <b>Agents Orchestration</b> · 架构 v2.0 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固 + 规划层接入与切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语）+ 执行层详细设计①②（output_schema 强校验 / info 采集超时）+ 治理层详细设计①（反思/判定：run 级目标 + 独立 judge）+ 学习层闭环（复盘分级 → 跨 run 经验库 → 回馈拆解提示词）（目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习闭环 → 崩溃恢复）· 435/435 测试全绿
 </footer>
 
 </div>

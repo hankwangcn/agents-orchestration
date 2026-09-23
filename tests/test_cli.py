@@ -381,3 +381,75 @@ class TestGoalAndReflectionOutput:
         """未注入判定 → 报告不打印判定块（保持既有输出）。"""
         run_cli(["report", "r1"], {"/api/runs/r1/report": REPORT}, capsys)
         assert "判定" not in capsys.readouterr().out
+
+
+class TestLearningLoopOutput:
+    """学习层闭环（#43/#44）：报告打印审计/成本/学习产物 + `ao lessons` 经验库。"""
+
+    AUDIT = {
+        "verdict": "warning", "success_rate": 0.5,
+        "issues": ["1 次剪枝（1 任务被剪）"],
+    }
+    COST = {"total_cost": 0.02, "failed_cost": 0.01, "pruned_cost": 0.0,
+            "over_budget_agents": [{"agent_id": "a"}]}
+    LEARNING = {"rule_count": 2, "rules": [
+        {"rule_id": "FP-boom", "severity": "medium", "tier": "objective",
+         "message": "错误码 boom 出现 2 次"},
+        {"rule_id": "JUD-1", "severity": "high", "tier": "judgment",
+         "message": "判定认为未达成目标"},
+    ]}
+    LESSONS = {
+        "runs_considered": 3, "lesson_count": 2,
+        "lessons": [
+            {"rule_id": "JUD-1", "severity": "high", "tier": "judgment",
+             "occurrences": 2, "runs": 2, "message": "判定认为未达成目标"},
+            {"rule_id": "FP-boom", "severity": "medium", "tier": "objective",
+             "occurrences": 3, "runs": 3, "message": "错误码 boom 出现 2 次"},
+        ],
+    }
+
+    def test_report_prints_audit_cost_learning(self, capsys):
+        report = dict(REPORT, audit=self.AUDIT, cost=self.COST,
+                      learning=self.LEARNING)
+        rc = run_cli(["report", "r1"], {"/api/runs/r1/report": report}, capsys)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "审计：warning" in out and "成功率 50%" in out
+        assert "成本：总 $0.02" in out and "超预算 agent 1 个" in out
+        assert "学习：2 条规则（客观 1 / 判定 1）" in out
+        assert "FP-boom" in out and "判定" in out          # 分级可见
+        assert "ao lessons" in out                         # 指引经验库出口
+
+    def test_report_without_learning_quiet(self, capsys):
+        """未产出学习产物 → 报告不打印对应块（保持既有输出）。"""
+        run_cli(["report", "r1"], {"/api/runs/r1/report": REPORT}, capsys)
+        out = capsys.readouterr().out
+        assert "审计：" not in out and "学习：" not in out and "成本：总" not in out
+
+    def test_report_prints_no_signal_learning(self, capsys):
+        report = dict(REPORT, learning={"rule_count": 0, "rules": []})
+        run_cli(["report", "r1"], {"/api/runs/r1/report": report}, capsys)
+        assert "学习：未提取到规则" in capsys.readouterr().out
+
+    def test_lessons_lists_experience_base(self, capsys):
+        captured = {}
+
+        def _fake(method, url, payload=None, timeout=15):
+            captured["url"] = url
+            return self.LESSONS
+
+        with mock.patch("orchestration.cli._request", side_effect=_fake):
+            rc = cli.main(["lessons", "--limit", "5"])
+        assert rc == 0
+        assert captured["url"].endswith("/api/lessons?limit=5")
+        out = capsys.readouterr().out
+        assert "经验库：2 条规则，来自 3 次运行" in out
+        assert "JUD-1" in out and "FP-boom" in out
+        assert "命中" in out and "run数" in out
+
+    def test_lessons_empty(self, capsys):
+        empty = {"runs_considered": 0, "lesson_count": 0, "lessons": []}
+        rc = run_cli(["lessons"], {"/api/lessons?limit=20": empty}, capsys)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "0 条规则" in out and "暂无" in out

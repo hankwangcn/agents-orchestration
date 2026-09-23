@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/hankwangcn/agents-orchestration/blob/main/LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-387%2F387%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
+[![Tests](https://img.shields.io/badge/tests-435%2F435%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不监控 agent 内部状态。**
 
@@ -23,14 +23,15 @@
 | **提示词即协议** | 与 agent 的唯一沟通方式是格式化提示词模板 + JSON 请求（`task_request` / `info_request`）；agent 零适配，协议演进仅需修改模板文本 |
 | **零成本接入** | agent 暴露 OpenAI 兼容 chat completions 端点即可接入（DeepSeek / vLLM / Ollama / 自研），注册表配置即完成；同进程 Python agent 免 HTTP（`InProcessAdapter` 直调本地函数）；不兼容的自建系统仅需实现一个 `_call_llm` 方法 |
 | **配置驱动注册** | `AgentRegistry.from_config(agents.yaml)` 批量注册 N 个 agent——只写"agent 在哪、叫什么模型"，能力 / 并发 / 预算声明由 `info_request` 自动问出；`api_key_env` 从环境变量取密钥 |
-| **CLI 运维入口** | 网关瘦客户端 `ao`（仅标准库 urllib）：目标拆解 / 提交 DAG / 进度 / 报告 / 指标 / 取消 / 断点恢复 / 人工 resolve / agent 档案，一条命令完成运维与人工出口 |
+| **CLI 运维入口** | 网关瘦客户端 `ao`（仅标准库 urllib）：目标拆解 / 提交 DAG / 进度 / 报告 / 指标 / 取消 / 断点恢复 / 人工 resolve / agent 档案 / **学习层经验库**（`ao lessons`），一条命令完成运维与人工出口 |
 | **资源统计与分配** | 通过 `info_request` 采集 agent 能力 / 限制声明入库（**规划层 `AgentPool`**）；三级分配策略：精确匹配 → 能力匹配 → 降级兜底，全程留痕，失败摘除（**调度层 `Allocator`**）——按六层架构物理分文件，`AgentRegistry` 为组合门面 |
 | **失败处理** | 自动重试 → 失败传播 → 反向可达性剪枝（死任务消除）；并发场景下竞态安全（先冻结派发，再逐级取消，晚到结果丢弃） |
 | **框架侧超时封顶** | 单次尝试超过 `required_resources.timeout` 由框架强制中断（不依赖 agent 履约），agent 挂死不再永久占住并发槽；超时汇入既有重试/剪枝链路 |
 | **并发调度** | asyncio 事件驱动并发派发；per-agent 并发上限与速率配额强制执行；单实例可并发运行多个 DAG，状态隔离 |
-| **治理闭环** | 结果审计（对账 / 分配审计 / 剪枝审计 / 语义交叉校验——**只读、可复跑、确定性**）+ 反思/判定（目标达成度，非确定、成本单列、与审计分离留痕）+ 成本核算（含失败成本与剪枝沉没成本）+ 自我学习规则提取（含 JUD-1/JUD-2 目标达成度规则） |
+| **治理闭环** | 结果审计（对账 / 分配审计 / 剪枝审计 / 语义交叉校验——**只读、可复跑、确定性**）+ 反思/判定（目标达成度，非确定、成本单列、与审计分离留痕）+ 成本核算（含失败成本与剪枝沉没成本），三件套在 run 收尾时自动产出并进报告 |
+| **学习层闭环** | 确定性复盘 → 规则提取（证据强度分级：`objective` 确定性事实 / `judgment` LLM 判定，**禁止同级呈现**）→ **跨 run 经验库落盘**（SQLite，同 rule 累计命中次数与贡献 run 数）→ **回馈拆解提示词**：`Decomposer(guidance_provider=)` 注入指导块（注册表实测的可用模型/能力标签 + **跨 run 复现**的返工事实，每条带数值支撑）；`GET /api/lessons` / `ao lessons` 查看经验库 |
 | **可观测性** | 结构化日志（key=value）+ 指标聚合，直接供给审计器与学习引擎 |
-| **API 网关** | 框架以系统形态对外服务：目标拆解 / 提交 DAG / 查询进度 / 获取报告 / 取消运行 / agent 档案快照 |
+| **API 网关** | 框架以系统形态对外服务：目标拆解 / 提交 DAG / 查询进度 / 获取报告 / 取消运行 / agent 档案快照 / **跨 run 经验库**（`GET /api/lessons`） |
 
 ---
 
@@ -40,7 +41,7 @@
 
 ```
 接入层 → 规划层 → 调度层 → 执行层 → 治理层 → 学习层
-(API 网关)  (拆解)  (注册表/调度器)  (适配器/Agent)  (审计/成本)  (规则提取)
+(API 网关) (拆解) (注册表/调度器) (适配器/Agent) (审计/成本/判定) (复盘→经验库→回馈拆解)
 ```
 
 核心设计原则：**解耦在协议面，稳定在解析组件**——与 agent 的耦合被压缩到"一个兼容端点"，稳定性兜底（双层校验、解析重试、注入面隔离）全部由框架解析组件吸收。
@@ -142,7 +143,23 @@ from orchestration.learning import LearningEngine
 
 audit = Auditor().audit(report)               # verdict: ok / warning / critical
 cost = CostAccountant().account(report)       # 按 agent / 匹配类型归集 + 预算判定
-rules = LearningEngine().learn(audit, cost)   # 六类规则：REC / FP / DEG / CAP / BUG / PRU
+rules = LearningEngine().learn(audit, cost)   # 八类规则：REC / FP / DEG / CAP / BUG / PRU / JUD
+```
+
+走网关时三件套在 run 收尾**自动产出**（`GET /api/runs/{id}/report` 的 `audit` / `cost` / `learning`），
+规则落盘为跨 run 经验库并回馈拆解提示词：
+
+```python
+from orchestration.decomposer import make_default_decomposer
+from orchestration.lessons import PromptAdvisor
+
+advisor = PromptAdvisor(registry, state_store)          # 经验库 + 注册表客观事实
+decomposer = make_default_decomposer(guidance_provider=advisor.guidance)
+decomposer.decompose(goal)      # 提示词 = 固定指令 → 〔历史经验指导块〕 → 用户目标
+```
+
+```bash
+ao lessons                      # 经验库视图：命中次数 / 贡献 run 数 / 证据强度分级
 ```
 
 ### 4. API 网关（系统形态）
@@ -225,6 +242,7 @@ ao metrics r1                                   # 5) 运行指标（成本/并�
 ao resolve r1 t5 --action complete --result '{"task_id":"t5","success":true,"output":{...}}'
                                                 # 6) 人工出口：确认 INTERRUPTED 任务
 ao resume r1                                    # 7) 断点恢复（需 state_store）
+ao lessons                                      # 8) 学习层经验库（跨 run 规则聚合，需 state_store）
 ```
 
 **交互模式**：`ao` 不带子命令（或 `ao shell`）进入 REPL——逐行执行任意子命令，错误不退出会话，tab 补全 + 历史持久化（`~/.ao_history`）：
@@ -316,6 +334,14 @@ export DEEPSEEK_API_KEY=sk-...       # 拆解引擎用真实 LLM；agent 侧仍�
 
 覆盖链路：真实 HTTP 采集 `judge` 能力 → 提交带 `goal` 的 run（mock agents 真实 HTTP 执行）→ 收尾判定（`DeepSeekAdapter` 真实 HTTP 打独立判定角色：协议装配 → output_schema 强校验 → usage 真实回填）→ 结论进报告 + 学习层 `JUD-1` 触发。同时验证 advisory 边界：判定不改任务状态、成本单列不计入任务总成本、无 `goal` 的 run 跳过判定（`skipped_reason=no_goal`）。12/12 断言通过。
 
+### 9. 学习层闭环冒烟（无需 API key）
+
+```bash
+.venv/bin/python scripts/smoke_learning.py
+```
+
+覆盖链路：真实网关 + 真实 CLI；一次 run 同时产出三类**客观**返工信号（失败错误码复现 → FP、降级分配 → DEG、剪枝 → PRU）与判定结论（JUD-1，`judgment` 分级）→ 规则落盘 SQLite 经验库 → **单 run 未达复现门槛故不进提示词** → 第二次 run 后经验库累积（命中 2 次 / 贡献 2 个 run）→ 指导块注入拆解提示词（带"既往 2 次运行命中 2 次"数值支撑），并校验提示词结构稳定（前缀=固定指令、结尾=用户目标）与客观/判定分节呈现；末尾以真实 CLI 走真实 HTTP 打印 `ao report`（审计/成本/学习三件套 + 判定 + 分配 + 剪枝）与 `ao lessons`（跨 run 经验库）。20/20 断言通过。
+
 ---
 
 ## Agent 接入
@@ -394,8 +420,10 @@ agents-orchestration/
 │   ├── metrics.py           # 可观测性：指标聚合 + 结构化日志
 │   ├── audit.py             # 结果审计：对账 / 分配审计 / 剪枝审计 / 交叉校验
 │   ├── cost.py              # 成本核算：按 agent / 匹配类型归集 + 预算判定
-│   ├── learning.py          # 自我学习：启发式规则提取（六类）
-│   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘）
+│   ├── reflection.py        # 反思/判定（治理层）：最终交付 × 原始目标 → 判定结论（advisory）
+│   ├── learning.py          # 自我学习：启发式规则提取（八类）+ 证据强度分级
+│   ├── lessons.py           # 经验库与提示词顾问：跨 run 聚合 + 回馈拆解提示词
+│   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘 + 学习经验库）
 │   ├── cli.py               # CLI `ao`：网关瘦客户端（仅标准库 urllib）
 │   ├── api/gateway.py       # API 网关：RunManager + FastAPI 端点
 │   └── adapters/            # Agent 适配器：base（协议装配/双层校验/重试/成本回填）
@@ -406,8 +434,9 @@ agents-orchestration/
 │   ├── smoke_deepseek.py     # 真实模型端到端冒烟（需 $DEEPSEEK_API_KEY）
 │   ├── smoke_decompose.py    # 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
 │   ├── smoke_reflection.py   # 反思/判定冒烟（目标基准 + 独立 judge + advisory 边界）
+│   ├── smoke_learning.py     # 学习层闭环冒烟（复盘 → 经验库落盘 → 回馈拆解提示词）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 387 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 反思判定 / 并发 / 网关 / 断点 / CLI / 适配器）
+├── tests/                   # 435 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 反思判定 / 学习闭环 / 并发 / 网关 / 断点 / CLI / 适配器）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告
 └── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
@@ -418,10 +447,10 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 387/387 全绿
+pytest        # 435/435 全绿
 ```
 
-测试覆盖重点：依赖分析（拓扑分层/并行前沿/可达性/成环与引用校验，23 项）、层职责切分（规划层 `AgentPool` × 调度层 `Allocator`）、解析组件（最严格模块，47 项：信封校验 + output_schema 强校验 + 重试兜底）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）、采集侧 wall-clock 超时。
+测试覆盖重点：依赖分析（拓扑分层/并行前沿/可达性/成环与引用校验，23 项）、层职责切分（规划层 `AgentPool` × 调度层 `Allocator`）、解析组件（最严格模块，47 项：信封校验 + output_schema 强校验 + 重试兜底）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）、采集侧 wall-clock 超时、学习层闭环（证据分级 / 经验库落盘与跨 run 聚合 / 复现门槛 / 提示词注入与客观-判定分离，43 项）、CLI 学习层出口（报告打印审计/成本/学习 + `ao lessons`，5 项）。
 
 ---
 

@@ -6,8 +6,15 @@ ReflectionReport（治理层反思/判定结论——目标是否达成）。
 剪枝质量 / 目标达成度）。
 
 定位：把审计数字与判定结论转成"可执行的拆解/分配优化建议"，规则带证据与
-动作建议，供阶段四及后续拆解优化闭环消费。纯规则引擎，不做 LLM 复盘——
-可观测、可测试。
+动作建议，经经验库（lessons.py）落盘并回馈拆解提示词——闭环出口。
+
+**证据强度分级（客观性分层）**：规则按来源分两级，禁止同级呈现——
+- ``objective``：确定性事实（审计对账 / 分配留痕 / 成本核算 / 剪枝统计），
+  只读、可复跑；**只有这一级可以作为提示词的硬性指导**；
+- ``judgment``：LLM 判定结论（JUD-*），非确定、有成本、不可复跑；只作
+  参考随附，不得伪装成事实。
+
+纯规则引擎，不做 LLM 复盘——可观测、可测试。
 """
 from __future__ import annotations
 
@@ -19,6 +26,27 @@ from .audit import AuditReport
 from .cost import CostReport
 from .reflection import ReflectionReport
 
+# 客观（确定性）来源的规则类别：审计事实对账 / 分配留痕 / 成本核算
+OBJECTIVE_CATEGORIES: frozenset[str] = frozenset({
+    "reconciliation",       # REC-1 / INT-1：框架自身断链、崩溃点副作用
+    "failure_pattern",      # FP-*：错误码频次
+    "degraded_assignment",  # DEG-1：降级占比
+    "capability_risk",      # CAP-1：风险分配失败率
+    "budget_overrun",       # BUG-*：预算声明对账
+    "pruning_quality",      # PRU-1：剪枝统计
+})
+
+# 判定（LLM）来源的规则类别：非确定，有成本，不可复跑
+JUDGMENT_CATEGORIES: frozenset[str] = frozenset({
+    "goal_mismatch",  # JUD-1：目标未达成
+    "reflection",     # JUD-2：判定未产出结论
+})
+
+
+def tier_of(category: str) -> str:
+    """规则类别 → 证据强度分级（objective | judgment）。"""
+    return "judgment" if category in JUDGMENT_CATEGORIES else "objective"
+
 
 class LearningRule(BaseModel):
     rule_id: str
@@ -26,10 +54,16 @@ class LearningRule(BaseModel):
     category: str  # failure_pattern | degraded_assignment | capability_risk
     #              | budget_overrun | pruning_quality | reconciliation
     #              | goal_mismatch | reflection
+    tier: str = ""
+    """证据强度分级：objective（确定性事实）| judgment（LLM 判定）。"""
     message: str
     evidence: dict = Field(default_factory=dict)
     action: str = ""
     """建议动作（喂拆解优化/分配调整）。"""
+
+    @property
+    def objective(self) -> bool:
+        return self.tier == "objective"
 
 
 class LearningReport(BaseModel):
@@ -37,6 +71,9 @@ class LearningReport(BaseModel):
     rule_count: int = 0
 
     def add(self, rule: LearningRule) -> None:
+        # 分级统一在唯一入口补齐：判定类规则不得与确定性事实同级呈现
+        if not rule.tier:
+            rule.tier = tier_of(rule.category)
         self.rules.append(rule)
         self.rule_count = len(self.rules)
 

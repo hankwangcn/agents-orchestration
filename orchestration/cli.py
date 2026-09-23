@@ -120,15 +120,26 @@ def cmd_serve(args: argparse.Namespace) -> int:
         registry = AgentRegistry()
         print("[serve] 警告：未提供 --config，注册表为空（可编程式接入或后补）")
     store = SqliteStateStore(args.state_store) if args.state_store else None
+    # 学习层闭环：经验库（跨 run 落盘）+ 回馈拆解提示词（注册表事实 + 复现规则）
+    from orchestration.lessons import PromptAdvisor
+
+    advisor = PromptAdvisor(registry, store)
     # 规划层：拆解引擎（框架内部 LLM 调用，与外部 agent 无关）
     decomposer = None
     if not args.no_decompose:
         try:
             from orchestration.decomposer import make_default_decomposer
 
-            decomposer = make_default_decomposer(model=args.decompose_model)
+            decomposer = make_default_decomposer(
+                model=args.decompose_model,
+                guidance_provider=advisor.guidance,
+            )
             print(f"[serve] 拆解引擎已启用（model={args.decompose_model}，"
                   f"POST /api/decompose / ao decompose）")
+            print("[serve] 学习层闭环已启用：拆解提示词注入历史经验/注册表事实"
+                  f"（复现门槛 {advisor.min_occurrences} 次）"
+                  + ("；经验库落盘并跨 run 累积" if store else
+                     "；未启用 state_store → 无跨 run 记忆"))
         except (ValueError, ImportError) as e:
             print(f"[serve] 未启用拆解引擎：{e}")
     else:
@@ -308,6 +319,8 @@ def cmd_report(args: argparse.Namespace) -> int:
                   f" → 剪枝 {len(p['pruned'])} 个任务"
                   + ("（含最终任务，整棵取消）" if p["pruned_final"] else ""))
     _print_reflection(resp.get("reflection"))
+    _print_audit(resp.get("audit"), resp.get("cost"))
+    _print_learning(resp.get("learning"))
     return 0
 
 
@@ -331,6 +344,61 @@ def _print_reflection(ref: dict | None) -> None:
         print(f"  · {r}")
     for g in ref.get("gaps") or []:
         print(f"  ✕ 缺口：{g}")
+
+
+def _print_audit(audit: dict | None, cost: dict | None) -> None:
+    """治理层确定性复盘：审计结论 + 成本归集（只读对账，可复跑）。"""
+    if audit:
+        print(f"\n审计：{audit.get('verdict')}  成功率 "
+              f"{(audit.get('success_rate') or 0) * 100:.0f}%"
+              + ("  问题：" + "；".join(audit.get("issues") or [])
+                 if audit.get("issues") else ""))
+    if cost:
+        print(f"成本：总 ${cost.get('total_cost')}  失败沉没 "
+              f"${cost.get('failed_cost')}  剪枝沉没 ${cost.get('pruned_cost')}"
+              + (f"  超预算 agent {len(cost.get('over_budget_agents') or [])} 个"
+                 if cost.get("over_budget_agents") else ""))
+
+
+def _print_learning(learning: dict | None) -> None:
+    """学习层规则（按证据强度分级呈现——客观事实与 LLM 判定禁止同级）。"""
+    if not learning:
+        return
+    rules = learning.get("rules") or []
+    if not rules:
+        print("\n学习：未提取到规则（本次运行无返工信号）")
+        return
+    print(f"\n学习：{len(rules)} 条规则（客观 "
+          f"{sum(1 for r in rules if r.get('tier') == 'objective')} / 判定 "
+          f"{sum(1 for r in rules if r.get('tier') == 'judgment')}）")
+    rows = [
+        [r.get("rule_id", ""), r.get("severity", ""),
+         "客观" if r.get("tier") == "objective" else "判定",
+         r.get("message", "")]
+        for r in rules
+    ]
+    print(_table(["rule", "severity", "tier", "message"], rows))
+    print("经验库（跨 run）：ao lessons")
+
+
+def cmd_lessons(args: argparse.Namespace) -> int:
+    """跨 run 经验库视图（学习层闭环记忆）：规则聚合 + 复现证据强度。"""
+    resp = _request("GET", _api(args.url, f"/api/lessons?limit={args.limit}"))
+    print(f"经验库：{resp['lesson_count']} 条规则，来自 "
+          f"{resp['runs_considered']} 次运行")
+    lessons = resp["lessons"]
+    if not lessons:
+        print("（暂无——跑过带 state_store 的 run 后自动累积）")
+        return 0
+    rows = [
+        [ls["rule_id"], ls["severity"],
+         "客观" if ls["tier"] == "objective" else "判定",
+         str(ls["occurrences"]), str(ls["runs"]),
+         (ls["message"] or "")[:60]]
+        for ls in lessons
+    ]
+    print(_table(["rule", "severity", "tier", "命中", "run数", "message"], rows))
+    return 0
 
 
 def cmd_metrics(args: argparse.Namespace) -> int:
@@ -447,7 +515,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
 # 全部子命令名（tab 补全用）
 _COMMANDS = [
     "serve", "decompose", "submit", "status", "report", "metrics", "cancel",
-    "resume", "resolve", "wait", "agents", "shell",
+    "resume", "resolve", "wait", "agents", "lessons", "shell",
     "help", "exit", "quit",
 ]
 
@@ -489,7 +557,7 @@ def _setup_readline() -> None:
 def _shell_help() -> None:
     print("ao 交互 shell —— 逐行执行任意子命令，Ctrl-D / exit / quit 退出")
     print("可用命令：serve decompose submit status report metrics cancel resume "
-          "resolve wait agents")
+          "resolve wait agents lessons")
     print("  help/exit/quit     本帮助 / 退出")
     print("  run_id 记忆        submit 后自动记住 run_id，status/report/等"
           "可省略")
@@ -618,6 +686,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("agents", help="agent 注册表档案")
     sp.set_defaults(func=cmd_agents)
+
+    sp = sub.add_parser("lessons",
+                        help="跨 run 经验库（学习层闭环记忆，需 state_store）")
+    sp.add_argument("--limit", type=int, default=20, help="最多显示条数（默认 20）")
+    sp.set_defaults(func=cmd_lessons)
 
     sp = sub.add_parser("shell", help="进入交互 shell（等价无子命令）")
     sp.set_defaults(func=cmd_shell)

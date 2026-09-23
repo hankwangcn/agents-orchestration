@@ -13,8 +13,10 @@
   - 已终态任务 → 保留（结果/成本/审计记录直接复用，不重跑不重计费）
 
 存储格式：整 DAG JSON（任务数小，整存简单可靠）+ assignments 表 +
-prune_reports（随 run 行存）。SQLite 单文件、零依赖；可换 Postgres
-（StateStore 抽象，实现同签名即可）。
+prune_reports（随 run 行存）+ learning_lessons 表（学习层经验库——跨 run
+记忆，回馈拆解提示词）。SQLite 单文件、零依赖；可换 Postgres
+（StateStore 抽象，实现同签名即可——经验库为可选能力，未实现则退化为
+"无跨 run 记忆"）。
 """
 from __future__ import annotations
 
@@ -45,6 +47,18 @@ CREATE TABLE IF NOT EXISTS assignments (
     reason    TEXT DEFAULT '',
     risk      INTEGER DEFAULT 0,
     PRIMARY KEY (run_id, task_id)
+);
+CREATE TABLE IF NOT EXISTS learning_lessons (
+    run_id     TEXT NOT NULL,
+    rule_id    TEXT NOT NULL,
+    tier       TEXT NOT NULL DEFAULT 'objective',
+    severity   TEXT NOT NULL DEFAULT 'low',
+    category   TEXT NOT NULL DEFAULT '',
+    message    TEXT NOT NULL DEFAULT '',
+    action     TEXT NOT NULL DEFAULT '',
+    evidence   TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT,
+    PRIMARY KEY (run_id, rule_id)
 );
 """
 
@@ -78,6 +92,20 @@ class StateStore(ABC):
 
     @abstractmethod
     def delete_run(self, run_id: str) -> None: ...
+
+    # -- 经验库（学习层闭环：跨 run 记忆；可选能力，默认退化为无记忆）--
+
+    def save_lessons(self, run_id: str, report: object) -> None:
+        """落盘一次 run 的学习规则（幂等：同 run 重跑覆盖）。
+
+        存储实现未支持经验库时退化为 no-op——学习层仍产出报告，只是没有
+        跨 run 记忆（提示词回馈退化为仅注册表事实）。
+        """
+        return None
+
+    def load_lessons(self) -> list[dict]:
+        """读全部经验库原始行（聚合交给 lessons.build_digest）。"""
+        return []
 
 
 class SqliteStateStore(StateStore):
@@ -226,8 +254,78 @@ class SqliteStateStore(StateStore):
     def delete_run(self, run_id: str) -> None:
         with self._lock:
             self._conn.execute("DELETE FROM assignments WHERE run_id=?", (run_id,))
+            self._conn.execute(
+                "DELETE FROM learning_lessons WHERE run_id=?", (run_id,)
+            )
             self._conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
             self._conn.commit()
+
+    # -- 经验库（学习层闭环）--
+
+    def save_lessons(self, run_id: str, report: object) -> None:
+        """落盘一次 run 的学习规则（幂等：同 run 重跑覆盖，不重复计数）。
+
+        report：learning.LearningReport（duck-typing，避免 state_store 反向
+        依赖学习层）。规则为空则只清空该 run 的旧行，不写入。
+        """
+        rules = list(getattr(report, "rules", []) or [])
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM learning_lessons WHERE run_id=?", (run_id,)
+            )
+            if rules:
+                self._conn.executemany(
+                    """
+                    INSERT INTO learning_lessons
+                        (run_id, rule_id, tier, severity, category, message,
+                         action, evidence, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            run_id,
+                            r.rule_id,
+                            getattr(r, "tier", "") or "objective",
+                            r.severity,
+                            r.category,
+                            r.message,
+                            r.action,
+                            json.dumps(r.evidence or {}, ensure_ascii=False),
+                            _ts(),
+                        )
+                        for r in rules
+                    ],
+                )
+            self._conn.commit()
+
+    def load_lessons(self) -> list[dict]:
+        """读全部经验库原始行（按时间正序；聚合在 lessons.build_digest）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT run_id, rule_id, tier, severity, category, message,
+                       action, evidence, created_at
+                FROM learning_lessons ORDER BY created_at, run_id, rule_id
+                """
+            ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            try:
+                evidence = json.loads(r["evidence"] or "{}")
+            except (ValueError, TypeError):
+                evidence = {}
+            out.append({
+                "run_id": r["run_id"],
+                "rule_id": r["rule_id"],
+                "tier": r["tier"],
+                "severity": r["severity"],
+                "category": r["category"],
+                "message": r["message"],
+                "action": r["action"],
+                "evidence": evidence if isinstance(evidence, dict) else {},
+                "created_at": r["created_at"] or "",
+            })
+        return out
 
 
 def _ts() -> str:

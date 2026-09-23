@@ -9,6 +9,11 @@ RunManager 管理 run 生命周期（run_id → 后台 asyncio.Task + 状态快�
 同一 AsyncScheduler 实例可并发运行多个 run（_RunCtx 状态隔离）。run 收尾后，
 若提交时给了原始目标且注入了 Reflector，则做一次目标达成度判定（治理层
 反思/判定，advisory——只写报告，不改状态不阻断）。
+
+**学习层闭环**：run 收尾时对同一份报告做确定性复盘——审计对账 →
+成本归集 → 规则提取（含判定结论），产物挂回报告；启用存储时规则落盘成
+**跨 run 经验库**，并经 `lessons.PromptAdvisor` 回馈拆解提示词
+（见 `decomposer.Decomposer(guidance_provider=...)`）。
 """
 from __future__ import annotations
 
@@ -20,11 +25,15 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from ..audit import Auditor
+from ..cost import CostAccountant
 from ..decomposer import DecomposeError, Decomposer
 from ..dependency import DependencyGraph
+from ..learning import LearningEngine
+from ..lessons import build_digest
 from ..metrics import MetricsCollector, configure_logging, log_event
 from ..models import DAG, Result, TaskStatus
-from ..reflection import Reflector
+from ..reflection import ReflectionReport, Reflector
 from ..registry import AgentRegistry
 from ..scheduler_async import AsyncScheduler, ScheduleReport
 from ..state_store import StateStore
@@ -47,6 +56,8 @@ class RunHandle:
     started_at: str = ""
     finished_at: str = ""
     task: Optional[asyncio.Task] = None
+    reflection_obj: Optional[ReflectionReport] = None
+    """判定结论对象（喂学习层 JUD-* 规则；报告里是 dict 形态）。"""
 
 
 class RunManager:
@@ -65,12 +76,14 @@ class RunManager:
         state_store: Optional[StateStore] = None,
         decomposer: Optional[Decomposer] = None,
         reflector: Optional[Reflector] = None,
+        learning: Optional[LearningEngine] = None,
     ):
         self._registry = registry
         self._metrics = metrics or MetricsCollector()
         self._store = state_store
         self._decomposer = decomposer
         self._reflector = reflector
+        self._learning = learning or LearningEngine()
         self._scheduler = AsyncScheduler(
             registry=registry,
             retries=retries,
@@ -115,6 +128,7 @@ class RunManager:
                 cancel_event=handle.cancel_event,
             )
             await self._attach_reflection(handle)
+            self._attach_learning(handle)
             handle.status = "done"
         except Exception as e:  # 调度器异常兜底（不应发生，防御）
             handle.error = str(e)
@@ -138,12 +152,50 @@ class RunManager:
         except Exception as e:  # 防御：判定永不阻断 run 收尾
             log_event("reflection_error", run_id=handle.run_id, error=str(e))
             return
+        handle.reflection_obj = rr
         handle.report.reflection = rr.model_dump()
         log_event(
             "run_reflected", run_id=handle.run_id, judged=rr.judged,
             enabled=rr.enabled, achieved=rr.achieved,
             independent=rr.independent, judge_agent=rr.judge_agent,
             cost=rr.cost,
+        )
+        if self._store is not None:
+            self._store.save_report(handle.run_id, handle.report)
+
+    def _attach_learning(self, handle: RunHandle) -> None:
+        """学习层闭环：对同一份报告做确定性复盘 → 落盘经验库 → 回馈拆解。
+
+        ① 审计对账（只读、可复跑）→ ② 成本归集 → ③ 规则提取（含判定结论
+        JUD-*）→ ④ 挂回报告 + 落盘为**跨 run 经验库**（回馈拆解提示词在
+        拆解侧经 PromptAdvisor 读取）。
+
+        学习层是复盘、不是主链路：任何异常都不得影响 run 收尾（防御）。
+        """
+        if handle.report is None:
+            return
+        try:
+            audit = Auditor(self._registry).audit(handle.report)
+            cost = CostAccountant(self._registry).account(handle.report)
+            report = self._learning.learn(
+                audit, cost, handle.reflection_obj
+            )
+        except Exception as e:  # 防御：学习层故障不阻断 run 收尾
+            log_event("learning_error", run_id=handle.run_id, error=str(e))
+            return
+        handle.report.audit = audit.model_dump()
+        handle.report.cost = cost.model_dump()
+        handle.report.learning = report.model_dump()
+        stored = False
+        if self._store is not None:
+            try:
+                self._store.save_lessons(handle.run_id, report)
+                stored = True
+            except Exception as e:
+                log_event("lesson_store_error", run_id=handle.run_id, error=str(e))
+        log_event(
+            "run_learned", run_id=handle.run_id, audit_verdict=audit.verdict,
+            rules=report.rule_count, stored=stored,
         )
         if self._store is not None:
             self._store.save_report(handle.run_id, handle.report)
@@ -209,7 +261,7 @@ class RunManager:
         }
 
     def report(self, run_id: str) -> dict:
-        """收尾报告（含审计数据源：assignments/prune/results/cost）。"""
+        """收尾报告（含审计/成本/学习产物——治理 + 学习层的确定性复盘）。"""
         handle = self._get(run_id)
         if handle.status == "running":
             raise HTTPException(status_code=409, detail="run 尚未结束")
@@ -228,6 +280,28 @@ class RunManager:
             "prune_reports": [p.model_dump() for p in report.prune_reports],
             "assignments": [a.model_dump() for a in report.assignments],
             "reflection": report.reflection,
+            "audit": report.audit,
+            "cost": report.cost,
+            "learning": report.learning,
+        }
+
+    def lessons_snapshot(self, limit: int = 20) -> dict:
+        """跨 run 经验库视图（学习层闭环的"记忆"出口）。
+
+        聚合口径：同 rule_id 跨 run 命中次数 / 贡献 run 数 / 最高 severity /
+        最近一次的证据——复现次数即"客观支撑"的强度。
+        """
+        if self._store is None:
+            raise HTTPException(
+                status_code=400,
+                detail="未启用状态存储（state_store）——经验库无落盘载体",
+            )
+        digest = build_digest(self._store.load_lessons())
+        return {
+            "runs_considered": digest.runs_considered,
+            "lesson_count": len(digest.lessons),
+            "generated_at": digest.generated_at,
+            "lessons": [ls.model_dump() for ls in digest.lessons[: max(limit, 0)]],
         }
 
     async def cancel(self, run_id: str) -> dict:
@@ -270,6 +344,7 @@ class RunManager:
             )
             handle.dag = handle.report.dag  # 同步为调度器实际推进的对象
             await self._attach_reflection(handle)
+            self._attach_learning(handle)
             handle.status = "done"
         except Exception as e:  # 调度器异常兜底（防御）
             handle.error = str(e)
@@ -447,18 +522,22 @@ def create_app(
     state_store: Optional[StateStore] = None,
     decomposer: Optional[Decomposer] = None,
     reflector: Optional[Reflector] = None,
+    learning: Optional[LearningEngine] = None,
 ) -> tuple[FastAPI, RunManager]:
     """构造 (app, manager)。registry 需已注册 agent（可先 collect 能力声明）。
 
-    state_store：启用断点持久化（SQLite 等），提供 resume / resolve 端点。
+    state_store：启用断点持久化（SQLite 等），提供 resume / resolve / lessons 端点，
+    并作为学习层跨 run 经验库的落盘载体。
     decomposer：启用规划层拆解（POST /api/decompose）——未注入则端点返回 400。
     reflector：启用治理层反思/判定（run 收尾后按 goal 判定交付，advisory）——
     未注入则不做判定。
+    learning：替换学习层阈值配置（默认 LearningEngine()；审计/成本/学习是
+    确定性复盘，始终启用，不依赖注入）。
     """
     configure_logging()
     manager = RunManager(
         registry, retries=retries, metrics=metrics, state_store=state_store,
-        decomposer=decomposer, reflector=reflector,
+        decomposer=decomposer, reflector=reflector, learning=learning,
     )
     app = FastAPI(
         title="Agents Orchestration Gateway",
@@ -497,6 +576,11 @@ def create_app(
     async def run_metrics(run_id: str) -> dict:
         """运行指标（可观测性）。"""
         return manager.metrics_snapshot(run_id)
+
+    @app.get("/api/lessons")
+    async def lessons(limit: int = 20) -> dict:
+        """跨 run 经验库（学习层闭环记忆）：规则聚合 + 复现证据强度。"""
+        return manager.lessons_snapshot(limit=limit)
 
     @app.post("/api/runs/{run_id}/cancel")
     async def cancel_run(run_id: str) -> dict:

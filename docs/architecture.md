@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-08-15
-> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固 + 规划层接入 + 规划层切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语）+ 执行层详细设计①②（output_schema 强校验 / info 采集超时）+ 治理层详细设计①（反思/判定：run 级目标 + 独立 judge，advisory），387/387 测试全绿）
+> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固 + 规划层接入 + 规划层切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语）+ 执行层详细设计①②（output_schema 强校验 / info 采集超时）+ 治理层详细设计①（反思/判定：run 级目标 + 独立 judge，advisory）+ 学习层闭环（确定性复盘 → 跨 run 经验库落盘 → 回馈拆解提示词），435/435 测试全绿）
 
 ---
 
@@ -66,12 +66,14 @@ flowchart TB
 
     subgraph GOV["治理层"]
         AU["结果审计器<br/>（正确性 + 成本）"]
+        RF["反思/判定器<br/>（交付 × 原始目标 → advisory）"]
         OB["可观测性<br/>（trace / 日志 / 成本核算）"]
     end
 
     subgraph LEARN["学习层"]
-        LRN["自我学习<br/>（复盘 → 沉淀规则 → 优化拆解）"]
-        KB["规则库 / 经验库"]
+        LRN["自我学习<br/>（确定性复盘 → 规则提取，客观/判定分级）"]
+        KB["经验库<br/>（跨 run 累积，落盘）"]
+        PA["提示词顾问<br/>（复现规则 + 注册表事实）"]
     end
 
     API --> TD
@@ -81,9 +83,11 @@ flowchart TB
     SCH --> QT --> AC
     AC -->|结果契约| AU
     AU --> OB
-    AU -->|失败/剪枝报告| LRN
+    AU -->|事实复盘| LRN
+    RF -->|判定结论| LRN
     LRN --> KB
-    KB -.->|优化拆解策略| TD
+    KB -->|跨 run 经验| PA
+    PA -.->|回馈指导块| TD
     KB -.->|资源分配经验| RC
 ```
 
@@ -93,7 +97,7 @@ flowchart TB
 
 | 模块 | 职责 | 关键输入 → 输出 |
 |---|---|---|
-| 任务拆解引擎 | LLM 将目标拆解为子任务 + 依赖 DAG；接入形态 = 网关 `POST /api/decompose` + CLI `ao decompose`（`--submit` 目标→DAG→提交一条链）；重试口径同协议 §7.3（失败原因 + 正确示例） | 目标 → `DAG{Task[]}` |
+| 任务拆解引擎 | LLM 将目标拆解为子任务 + 依赖 DAG；接入形态 = 网关 `POST /api/decompose` + CLI `ao decompose`（`--submit` 目标→DAG→提交一条链）；重试口径同协议 §7.3（失败原因 + 正确示例）；**提示词由学习层回馈**——`Decomposer(guidance_provider=)` 在基础指令与用户目标之间注入经验/注册表指导块（结构稳定：前缀恒为固定指令、结尾恒为用户目标） | 目标 → `DAG{Task[]}` |
 | 资源统计器 | info_request 采集 agent 能力 / 资源 / 约束声明（阶段三；实现 = `agent_pool.AgentPool`）；注册记录口径 = **agent / 能力 / 限制（功能 + 性能）**——constraint → 功能限制（forbidden/languages）、resource → 性能限制（并发/限速/预算），合规限制归后期安全层；刷新策略 = **TTL 惰性刷新 + 决策点校验**——池级 `ensure_fresh()` 读时过期即刷，派发前 `validate_before_dispatch()` 对选中 agent 复核易变维度（resource/constraint）；采集受**框架侧 wall-clock 上限**（`info_timeout_seconds`，与任务执行 #34 对称）约束 | agent 池 → `AgentProfile[]` |
 | 依赖分析 | 数据流依赖的独立结构视图（实现 = `dependency.DependencyGraph`）：引用合法性 / 无环 / 拓扑序 / **拓扑分层（并行前沿）** / 可达性与反向可达（剪枝判据）/ 交付点。**纯结构、不持有运行时状态**（status 归调度层）；DAG 保留同名方法作薄委托（调用点零改动） | `DAG` → `DependencyGraph` |
 | 资源协调器 | 三级分配（exact → capability → degraded，全程留痕）+ 多实例轮询 + 连续失败摘除（实现 = `allocator.Allocator`）；**只读画像不采集**——采数据是规划层资源统计器的职责 | `ResourcePlan` + agent 池 → `Allocation` |
@@ -102,7 +106,7 @@ flowchart TB
 | Agent 适配器 | 对接任意 agent（DeepSeek / Claude / 自建，默认 OpenAI 兼容 HTTP 端点，见 §3.3）：装配协议提示词（模板 + 请求 JSON）+ 解析响应（双层校验含 **output_schema 强校验**），实现取消契约与结果契约 | 任务 → 提示词请求 → `Result` |
 | 结果审计器 | 校验正确性、核算成本、标记异常。**只读、可复跑、确定性**——只做事实对账（状态机自洽性），不做产出**内容**正确性判定 | `Result[]` → `AuditReport` |
 | 反思/判定器 | 运行级**语义判定**（实现 = `reflection.Reflector`）：最终交付 × 原始目标 → 结论（达成/未达成 + score + 缺口）。基准**只能是 goal**（子任务描述是框架自产的拆解产物，用作基准即自证循环），子任务结果仅作证据随附；判定者 = 注册表中**声明 `judge`/`reviewer` 能力的独立 agent**（能力经 info_request 采集、可异构模型），无则由 `allow_self_judge` 决定降级自判（报告标记 `independent=false`）或跳过；判定 = 一次**普通 `task_request`**（复用协议装配 + output_schema 强校验 + 解析重试，**消息类型零新增**、agent 零变更）。**advisory**：只写 `ScheduleReport.reflection` + 喂学习（JUD-1/JUD-2），不改状态、不阻断、不自动重派；**与审计严格分离**（审计确定性/可复跑，判定非确定/有成本），调用有超时、成本单列、产出不再被判定（递归边界） | 原始目标 + `ScheduleReport` → `ReflectionReport` |
-| 自我学习 | 复盘失败与低效拆解，沉淀规则优化拆解策略（含判定结论 JUD-*） | `AuditReport` / 剪枝报告 / `ReflectionReport` → 规则 |
+| 自我学习 | **闭环**：确定性复盘（审计事实 + 成本事实 + 判定结论）→ 规则提取（**证据强度分级**）→ **落盘为跨 run 经验库** → **回馈拆解提示词**。实现 = `learning.LearningEngine`（规则提取，8 类）+ `lessons.PromptAdvisor`（经验库聚合 + 注册表客观事实 → 提示词指导块）。分级：`objective`（REC/FP/DEG/CAP/BUG/PRU/INT——只读、可复跑、确定性）与 `judgment`（JUD-1/JUD-2——LLM 判定，非确定、有成本）**禁止同级呈现**，提示词里分节并显式标注来源。闭环出口 = 拆解提示词：基础指令 → 〔指导块〕 → 用户目标（`decomposer.Decomposer(guidance_provider=)`）；指导块恒带数值支撑（"既往 N 次运行命中 M 次"）与注册表实测事实（可用模型 / 已注册能力标签），且**要求跨 run 复现**（`min_occurrences`，默认 2）——单次偶发不写成指导。经验库经 `GET /api/lessons` / `ao lessons` 可见 | `AuditReport` + `CostReport` + `ReflectionReport` → `LearningReport` → 经验库 → 提示词指导块 |
 
 ### 3.3 Agent 接入方式（默认 HTTP，OpenAI 兼容端点）
 
@@ -246,7 +250,7 @@ flowchart LR
 
 **与结果导向不冲突**：断点只存框架侧的调度状态，不碰 agent 内部状态——"只管结果"哲学不变。
 
-- **StateStore 抽象 + SQLite 实现**（orchestration/state_store.py）：单文件零依赖，可换 Postgres
+- **StateStore 抽象 + SQLite 实现**（orchestration/state_store.py）：单文件零依赖，可换 Postgres（经验库为可选能力——未实现则退化为无跨 run 记忆）
 - **事件驱动写入**：任务状态变更（启动置 RUNNING / 终态 / 剪枝 / 取消）即落盘，非定期快照——崩溃点数据最新，丢失窗口≈0
 - **恢复入口**：`AsyncScheduler.resume_run(run_id)` + 网关 `POST /api/runs/{id}/resume`
 - **run 级目标亦落盘**：提交时可选给 `goal`（判定基准），存 `runs.goal` 列（`goal=None` 的频繁落盘保留原值）；恢复后判定仍以同一目标为基准——否则“回头看目标”在崩溃恢复后即丢失
@@ -322,6 +326,8 @@ flowchart LR
 - [x] **治理层详细设计①：run 级目标持久化 + 反思/判定（独立 judge，advisory）**（2026-09-23 完成）— 背景：框架此前只在**契约/结构**层面判定“结果符合预期”（解析组件硬红线 + 审计事实对账），产出**内容**正确性无人判定——格式完美但内容错误的结果会被判 SUCCESS，语义正确性完全外包给 agent 自报与人工读报告（#40）。①**run 级目标持久化**（`gateway.py` / `state_store.py` / `cli.py`）：判定基准是**用户原始目标**，但 goal 原本不落盘（`POST /api/decompose` 仅在 HTTP 响应里回传一次，`DAG`/`Task`/`StateStore` 均无此字段），提交后目标即丢失、“回头看目标”无从谈起——现 `POST /api/runs` 与 `ao submit` 支持**可选传 goal**（`RunHandle.goal`；拆解入口 `--submit` 自动带上原始 goal），直接提交现成 DAG 可不传（此时判定跳过）；`StateStore.runs` 新增 `goal` 列（**既有库打开时自动 `ALTER TABLE` 补列**；`goal=None` 保留原值——调度器的高频事件驱动落盘、`resolve` 局部变更都不覆盖提交时写入的目标），`load_run` 返回 goal，`resume` 恢复后判定仍用同一基准；快照/报告均暴露 goal。②**反思/判定模块**（新增 `orchestration/reflection.py`，治理层）：`Reflector` 做**运行级**判定——基准**只能是 goal**，交付任务（出度 0）产出为待验对象、过程任务结果仅作证据（含失败/剪枝事实），**不拿子任务描述当验收标准**（子任务是框架自产，用它当基准即自证循环）；判定者优先选注册表中声明 `judge`/`reviewer`/`reflection` 能力的**可用独立 agent**（能力由 info_request 采集，与其它 agent 同构——可指向异构模型，避免“自己判自己”），无此类 agent 时按 `allow_self_judge` 降级自判并在报告中标记 `independent=false`（或直接跳过，记 `skipped_reason`）；判定 = 一次**普通 `task_request`**（`desc` 放判定指令、`inputs` 放 goal/deliverables/evidence/facts、`output_schema` 放判定结构），走适配器基类的协议装配 + **output_schema 框架侧强校验** + 解析重试 + usage 真实回填——**消息类型零新增、agent 零变更**；调用受框架侧 wall-clock 超时约束（超时/异常/判定 agent 报失败一律收敛为 `error_code`，**绝不抛出**）。③**advisory 语义与边界**：结论写进 `ScheduleReport.reflection`（报告可见）+ 喂学习层（新增 `JUD-1` 目标未达成 / `JUD-2` 判定未产出结论两条规则，`LearningEngine.learn(audit, cost, reflection=None)` 向后兼容）；**不改任务状态、不阻断交付、不自动重跑**（副作用任务重派 = 副作用执行两次，既有红线）；**与审计严格分离**（审计只读/可复跑/确定性，判定非确定/有成本/不可复跑），成本单列不计入任务总成本，判定产出不再被判定（递归边界）。网关 `create_app(..., reflector=)` 注入，`ao serve` 自动装配（`--no-reflect` 可关），提交带 goal 时收尾判定、判定异常绝不影响 run 收尾状态。回归：新增 `tests/test_reflection.py` 20 项（无目标跳过 / 独立判定 agent 优先 / 降级自判标记 / 不许自判则跳过 / 空注册表不抛错 / judge·reviewer·reflection 三标签 / 摘除的判定 agent 不参与 / 基准与证据分离且子任务不作基准 / 失败过程任务摘要带错误码 / 大产出截断 / 判定报失败 / output_schema 强校验 + 解析重试恰好一次 / 修正重试成功 / 超时不拖住调用方 / 同步路径一致且不改任务状态）+ `tests/test_gateway.py::TestGoalAndReflection` 5 项（报告携带 goal 与结论 / 无目标跳过 / 未注入 Reflector 不判定 / 判定异常不影响收尾 / HTTP 提交带 goal）+ `tests/test_resume.py` goal 持久化 2 项 + 网关恢复后判定 1 项（含 legacy 库 `ALTER TABLE` 迁移）+ `tests/test_learning.py::TestReflectionRules` 5 项 + `tests/test_cli.py::TestGoalAndReflectionOutput` 7 项（`--goal` 透传 / 无 goal 不带字段 / status 显示目标 / report 打印判定与缺口 / 自判标记 / 跳过与失败两种未产出形态 / 未判定时输出保持原样）。冒烟：新增 `scripts/smoke_reflection.py`（mock agents 新增 `judge` 角色与 `judge_configs()`；真实 HTTP 采集 judge 能力 → 提交带 goal 的 run → `DeepSeekAdapter` 真实 HTTP 打判定角色 → output_schema 强校验 + usage 真实回填 → 结论进报告 + JUD-1 触发 → 无 goal 跳过；12/12 断言通过）。测试 387/387 全绿（`PYTHONHASHSEED` 0–4 复跑恒定），见 §10
 - [x] **执行层详细设计①②：output_schema 框架侧强校验 + info 采集框架侧超时**（2026-09-23 完成）— ①**output_schema 强校验**（`validation.py` / `adapters/base.py`）：`output_schema` 此前仅作**提示**随请求下发（`build_task_request`），框架侧无强制——成功响应的 output 结构可静默偏离期望（"坏结构静默通过"）。现补为双层校验第二层的一部分（协议 §7.2）：`validate_output_schema` 按**简化 Schema 方言**（字段 → 类型描述的映射：类型 token `string/number/integer/boolean/object/array/null/any`、并集 `"a\|b"`、数组 `[spec]`（元素可嵌套）、嵌套对象、`{"enum": [...]}`）强校验，列出字段**必需**、多余字段**容忍**、未知 spec 形态与未知类型 token **保守不强制**（不因 schema 写法误判 agent）、完整 JSON-Schema 节点整体跳过（结构一致性仍交审计 §7.5）；不符 → `ResponseValidationError`，走 §7.3 修正重试（修正提示**一并给出期望结构**，此前只有通用示例），仍失败 → 任务失败汇入既有重试/剪枝。`parse_result` / `aparse_result` / `validate_result` 增 `output_schema` 透传；`run_task` / `arun_task` 传入 `task.output_schema`；简化版模板（§7.8）、info / cancel 请求、失败响应不做此校验。②**info 采集超时**（`agent_pool.py` / `registry.py` / 新增 `timeouts.py`）：info_request 采集原无框架侧 wall-clock 上限，与任务执行（#34）不对称——采集卡死会无封顶地拖住调用方（run 起始的池级刷新、派发前的决策点校验）。现 `AgentPool` 新增 `info_timeout_seconds`（默认 30s，`<=0` 关闭；`AgentRegistry` 透传 + 属性）：同步 `_collect_one` 走共享 wall-clock 原语（daemon 线程 join，不阻塞解释器退出），异步 `_acollect_one` 走 `asyncio.wait_for`；超时按**单点采集失败**处理（返回 `ok=False` + 明确错误，保留该 agent 上次已知画像，不中断其余 agent）。顺带把 `scheduler._call_with_timeout` 抽为共享模块 `orchestration/timeouts.py::call_with_timeout`（执行层/规划层共用一份，避免重复）。回归：`tests/test_validation.py::TestOutputSchema` 18 项（缺省跳过 / 结构匹配 / 缺字段 / 类型错 / 数组元素类型 / 多余字段容忍 / output 非对象 / 可空并集 / 嵌套对象 / 枚举 / number 拒 bool / 未知 token 不强制 / JSON-Schema 节点跳过 / 简化版跳过 / info 跳过 / 失败响应跳过 / 修正提示携带 schema / 重试仍失败）+ `tests/test_inprocess.py` 4 项（接线实证：同步强校验生效、结构匹配通过、异步强校验生效、未声明不校验）+ `tests/test_registry.py::TestInfoTimeout` 6 项（同步采集封顶 / 池级刷新封顶 / 异步决策点封顶 / 超时保留上次画像 / 关闭超时 / 默认值与透传）。测试 347/347 全绿，见 §10
 
+- [x] **学习层详细设计：确定性复盘接入生产路径 + 跨 run 经验库落盘 + 回馈拆解提示词**（2026-09-23 完成）— 背景：学习层此前**能跑但没人调、算完即扔**——`Auditor`/`CostAccountant`/`LearningEngine` 只出现在 tests 与冒烟脚本（网关/CLI 一次不调），规则不落盘（`StateStore` 仅 runs/assignments 两表），`LearningRule.action` 是自由文本、无消费方、无机器可读输出（§3.2 承诺的"规则库/经验库"零实现）。①**确定性复盘接入生产路径**（gateway.py / models.py）：run 收尾时对同一份报告做只读复盘——审计对账 → 成本归集 → 规则提取（含判定结论），产物挂回 `ScheduleReport.audit/cost/learning`，`GET /api/runs/{id}/report` 与 `ao report` 一并输出（审计 verdict、成本三项、规则表）；学习层是**复盘不是主链路**，任何异常都被隔离（`learning_error` 日志，run 照常收尾）。②**跨 run 经验库**（state_store.py / 新增 lessons.py）：`LearningRule` 增 `tier`（**证据强度分级**：`objective` 确定性事实 = REC/FP/DEG/CAP/BUG/PRU/INT，`judgment` LLM 判定 = JUD-1/JUD-2），分级在唯一入口 `LearningReport.add()` 补齐——防止把非确定结论伪装成事实；`SqliteStateStore` 新增 `learning_lessons` 表（run_id+rule_id 主键，**同 run 重跑幂等覆盖**）与 `save_lessons`/`load_lessons`（经验库为**可选能力**，存储未实现则退化为无跨 run 记忆；`delete_run` 连带清理）；`lessons.build_digest()` 把原始行聚合成 `LessonDigest`——同 rule_id 的**命中次数 / 贡献 run 数 / 最高 severity / 最近证据**（单 run 内 `failure_pattern_min=2` 意义有限，**跨 run 复现才是客观支撑**）。③**闭环出口 = 回馈拆解提示词**（新增 `lessons.PromptAdvisor` + decomposer.py）：提示词结构改为「固定指令 → 〔学习层指导块〕 → 用户目标」（前后缀稳定，便于回归与经验积累），`Decomposer(guidance_provider=)` 每次拆解前取一次指导块（provider 缺失/空串/抛异常一律退化为不注入，学习层故障不拖垮拆解）；指导块内容 = **注册表实测事实**（当前可用模型列表、已注册能力标签——直接测量无需阈值，直击 DEG-1 降级与 CAP-1 能力风险：这两类返工在拆解期即可避免）+ **复现达标的客观规则**（`min_occurrences` 默认 2，每条恒带"既往 N 次运行命中 M 次"数值支撑与建议动作，`max_items` 限条数、超长截断）+ **判定结论单独成节并显式标注非确定来源**（客观与判定**禁止同级呈现**）；仅对"怎么拆"有指导意义的类别（FP/DEG/CAP/BUG/PRU/JUD）进提示词，框架自身问题（REC-1 断链、INT-1 崩溃）不进。`DECOMPOSE_PROMPT_VERSION` 升至 v2 留痕（与 agent 侧的 `PROTOCOL_VERSION` 相互独立：拆解是框架内部 LLM 调用，不走消息协议）。④**接入与观测**：网关新增 `GET /api/lessons`（经验库聚合视图），CLI 新增 `ao lessons [--limit]`；`ao serve` 装配 `PromptAdvisor(registry, store)` 并注入拆解引擎（打印复现门槛与是否有跨 run 记忆）。回归：新增 `tests/test_lessons.py` 43 项（分级：客观/判定类别映射与唯一入口补齐；经验库：落盘往返含证据、同 run 幂等、空报告清行、delete_run 连带清理、未实现存储退化 no-op；聚合：命中次数/贡献 run 数/最高 severity/最近消息与证据胜出/排序/无 rule_id 行不计入；PromptAdvisor：注册表事实无门槛、复现门槛、判定分节隔离、可关判定节、非提示类别排除、条数上限、读失败退化、超长截断；Decomposer：结构前后缀稳定、指导块居中注入、重试提示同样携带、provider 故障退化、空白不注入；网关：报告带 audit/cost/learning、经验库跨 run 聚合、**闭环端到端**（两次 run → 经验库 → 提示词含"既往 2 次运行命中 2 次"）、判定结论以 judgment 分级入库、学习层故障不阻断、无存储时端点 400、`GET /api/lessons` 正常）+ `tests/test_cli.py::TestLearningLoopOutput` 5 项（报告打印审计/成本/学习三件套且分级可见、无产物时保持原输出、无信号提示、`ao lessons` 透传 limit 与列宽、空经验库提示）。冒烟：新增 `scripts/smoke_learning.py`（真实网关 + 真实 CLI + mock agents 真实 HTTP；一次 run 同时产出 FP/DEG/PRU 三类客观信号 + JUD-1 判定信号 → SQLite 落盘 → 单 run 未达复现门槛不进提示词 → 二次 run 后进入提示词且带复现数值 → 提示词结构校验；末尾真实 CLI 走真实 HTTP 打印 `ao report` 与 `ao lessons`；20/20 断言通过）。测试 435/435 全绿（`PYTHONHASHSEED` 0–4 复跑恒定），见 §10
+
 ---
 
 ## 9. 待定项（实现前需拍板）
@@ -359,6 +365,7 @@ agentsOrchestration/
 │   ├── smoke_multiagent.py     # 多 agent 全流程冒烟（mock agents，--visual 出 HTML）
 │   ├── smoke_decompose.py      # 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
 │   ├── smoke_reflection.py     # 反思/判定冒烟：goal → 独立 judge 判定 → 报告 + 学习
+│   ├── smoke_learning.py       # 学习层闭环冒烟：复盘 → 经验库落盘 → 回馈拆解提示词
 │   └── smoke_resume.py         # 断点恢复冒烟：崩溃 → 恢复 → 续跑（§5.5）
 ├── orchestration/           # 主包
 │   ├── models.py            # Task / Result / Assignment / DAG（调度期状态操作）/ ScheduleReport
@@ -370,14 +377,15 @@ agentsOrchestration/
 │   ├── timeouts.py          # 框架侧 wall-clock 超时原语（任务执行 #34 / info 采集共用）
 │   ├── decomposer.py        # 任务拆解：LLM 生成 DAG + 拆解 Schema 校验
 │   ├── registry.py          # Agent 注册表门面：组合 AgentPool（规划层）+ Allocator（调度层），零逻辑转发
-│   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘，§5.5）
+│   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘 + 学习经验库，§5.5）
 │   ├── scheduler.py         # 同步调度器：拓扑派发 + 任务分配 + 失败传播 + 剪枝
 │   ├── scheduler_async.py   # 异步并发调度器：并发派发 + 竞态处理 + 资源限制（阶段四）
 │   ├── metrics.py           # 可观测性：指标聚合 + 结构化日志（阶段四）
 │   ├── audit.py             # 结果审计器：对账 / 分配审计 / 剪枝审计 / 交叉校验（阶段二）
 │   ├── cost.py              # 成本核算：按 agent/匹配类型归集 + 预算判定（阶段二）
 │   ├── reflection.py       # 反思/判定（治理层）：最终交付 × 原始目标 → 判定结论（advisory）
-│   ├── learning.py          # 自我学习：规则提取（失败模式/降级/风险/预算/剪枝/目标达成度）（阶段二）
+│   ├── learning.py          # 自我学习：规则提取（失败模式/降级/风险/预算/剪枝/目标达成度）+ 证据强度分级
+│   ├── lessons.py           # 经验库与提示词顾问：跨 run 聚合（LessonDigest）+ 回馈拆解提示词（PromptAdvisor）
 │   ├── api/
 │   │   └── gateway.py       # API 网关：RunManager + FastAPI 端点（阶段四）
 │   └── adapters/
@@ -396,6 +404,7 @@ agentsOrchestration/
     ├── test_audit.py          # 审计器（阶段二）
     ├── test_cost.py           # 成本核算（阶段二）
     ├── test_learning.py       # 自我学习规则（阶段二）
+    ├── test_lessons.py        # 学习层闭环：分级/经验库落盘与聚合/提示词回馈（学习层）
     ├── test_metrics.py        # 指标收集 + 结构化日志（阶段四）
     ├── test_gateway.py        # API 网关（阶段四）
     ├── test_resume.py         # 断点持久化 + 恢复（A+B 策略 + goal 持久化，§5.5）

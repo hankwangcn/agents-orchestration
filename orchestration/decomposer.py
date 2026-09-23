@@ -8,6 +8,11 @@
 而是把失败原因 + 正确示例追加进提示词再试一次——"给示例比给指令在格式
 稳定性上稳一个量级"（项目准则）。
 
+**学习层闭环出口**：提示词 = 固定指令 → 〔学习层指导块〕 → 用户目标。
+指导块由 `lessons.PromptAdvisor` 生成（经验库跨 run 聚合 + 注册表客观事实），
+经 `guidance_provider` 注入——既往运行的返工事实（降级分配、能力风险、高频
+错误码、剪枝）在拆解期即被规避。指导块缺失/生成失败一律退化为不注入。
+
 DAG 是任务的统一描述抽象（对话共识）：无依赖 = 默认并行，有依赖 = 串/并
 混合，都在同一 DAG 表达内；依赖结构在提交时一次性给定（批处理"任务→
 结果"定位下不支持运行中动态扩图）。
@@ -21,6 +26,9 @@ from typing import Callable, Optional
 from .dependency import DependencyError, DependencyGraph
 from .models import DAG, ResourceRequirement, SideEffects, Task
 from .validation import ResponseValidationError, extract_json
+
+DECOMPOSE_PROMPT_VERSION = "v2"
+"""提示词版本——学习层回馈（动态指导块）改变了提示词形态，故升版留痕。"""
 
 DECOMPOSITION_PROMPT = """你是任务拆解引擎。将用户目标拆解为可执行的子任务集合，输出任务间的数据流依赖。
 
@@ -87,6 +95,14 @@ class Decomposer:
     llm_call：接收完整提示词文本，返回模型原始响应。若其签名接受
     ``temperature`` 关键字参数，则注入 ``self.temperature``（否则忽略——
     调用方可自行在闭包里固化温度）。**框架内部 LLM 调用，不走消息协议。**
+
+    guidance_provider：**学习层闭环出口**——每次拆解前调用一次，返回一段
+    历史经验/注册表事实指导块（`lessons.PromptAdvisor.guidance`），追加在
+    基础提示词与用户目标之间。返回空串即不注入；provider 抛异常一律视为
+    无指导（拆解链路不因学习层故障而失败）。
+
+    提示词结构（保持稳定，便于经验积累与回归）：基础提示词 → 〔指导块〕 →
+    用户目标。
     """
 
     def __init__(
@@ -94,15 +110,22 @@ class Decomposer:
         llm_call: Callable[..., str],
         max_retries: int = 1,
         temperature: float = 0.2,
+        guidance_provider: Optional[Callable[[], str]] = None,
     ):
         self._llm_call = llm_call
         self.max_retries = max_retries
         self.temperature = temperature
         self._passes_temperature = _accepts_kwarg(llm_call, "temperature")
+        self.guidance_provider = guidance_provider
+        self.last_guidance = ""
+        """最近一次拆解实际注入的指导块（空串 = 无指导），供观测与测试。"""
+        self.last_prompt = ""
+        """最近一次拆解实际发出的提示词（含指导块），供观测与测试。"""
 
     def decompose(self, goal: str) -> DAG:
         """目标 → DAG；连续 max_retries + 1 次不合规则抛 DecomposeError。"""
-        base_prompt = f"{DECOMPOSITION_PROMPT}\n\n用户目标：{goal}"
+        self.last_guidance = self._guidance()
+        base_prompt = _base_prompt(goal, self.last_guidance)
         last_error: Optional[Exception] = None
 
         for attempt in range(self.max_retries + 1):
@@ -111,6 +134,7 @@ class Decomposer:
                 base_prompt if attempt == 0
                 else _correction_prompt(base_prompt, last_error)
             )
+            self.last_prompt = prompt
             raw = self._invoke(prompt)
             try:
                 obj = extract_json(raw)
@@ -121,6 +145,15 @@ class Decomposer:
         raise DecomposeError(
             f"拆解输出连续 {self.max_retries + 1} 次未通过 Schema 校验：{last_error}"
         ) from last_error
+
+    def _guidance(self) -> str:
+        """取指导块：无 provider / 空串 / 异常 → 空串（学习层故障不拖垮拆解）。"""
+        if self.guidance_provider is None:
+            return ""
+        try:
+            return (self.guidance_provider() or "").strip()
+        except Exception:
+            return ""
 
     def _invoke(self, prompt: str) -> str:
         """调用底层 LLM（支持 temperature 注入的调用方按需传入）。"""
@@ -186,6 +219,19 @@ class Decomposer:
         return dag
 
 
+def _base_prompt(goal: str, guidance: str = "") -> str:
+    """基础提示词 = 固定指令 → 〔学习层指导块〕 → 用户目标。
+
+    指导块居中注入：前缀恒为固定指令、结尾恒为用户目标，便于回归断言与
+    经验积累（结构稳定比位置好看更重要）。
+    """
+    parts = [DECOMPOSITION_PROMPT]
+    if guidance:
+        parts.append(guidance)
+    parts.append(f"用户目标：{goal}")
+    return "\n\n".join(parts)
+
+
 def _correction_prompt(base_prompt: str, error: Optional[Exception]) -> str:
     """重试修正提示（口径同协议 §7.3）：失败原因 + 正确示例。"""
     return (
@@ -212,11 +258,15 @@ def make_default_decomposer(
     temperature: float = 0.2,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
+    guidance_provider: Optional[Callable[[], str]] = None,
 ) -> Decomposer:
     """默认拆解引擎：复用 DeepSeekAdapter 的裸聊天入口（同一套端点与鉴权）。
 
     api_key 缺省回落到环境变量 DEEPSEEK_API_KEY；两者皆无则抛 ValueError——
     由调用方决定是否启用拆解能力（框架其余功能不依赖拆解引擎）。
+
+    guidance_provider：学习层闭环出口（经验库 + 注册表事实 → 指导块），
+    见 ``lessons.PromptAdvisor.guidance``。
     """
     from .adapters.deepseek import DeepSeekAdapter
 
@@ -226,4 +276,8 @@ def make_default_decomposer(
     if base_url:
         kwargs["base_url"] = base_url
     adapter = DeepSeekAdapter(**kwargs)
-    return Decomposer(llm_call=adapter.chat, temperature=temperature)
+    return Decomposer(
+        llm_call=adapter.chat,
+        temperature=temperature,
+        guidance_provider=guidance_provider,
+    )

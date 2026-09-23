@@ -229,6 +229,9 @@ class ScheduleReport(BaseModel):
     final_status：success | partial | failed | cancelled（阶段四外部取消）。
     reflection：治理层判定结论（反思/判定模块产出，advisory）——未启用
     判定或无原始目标时为 None；运行级，挂在报告上供审计/学习/人工消费。
+    audit / cost / learning：治理层与学习层在 run 收尾时对同一份报告的
+    确定性复盘（审计对账 / 成本归集 / 规则提取）——同步调度器与库内直调用
+    不产出，故为 None；网关收尾时填写，供报告查询与经验库落盘。
     """
     dag: DAG
     results: dict[str, Result] = Field(default_factory=dict)
@@ -237,3 +240,6 @@ class ScheduleReport(BaseModel):
     total_cost: float = 0.0
     final_status: str = "success"
     reflection: Optional[dict] = None
+    audit: Optional[dict] = None
+    cost: Optional[dict] = None
+    learning: Optional[dict] = None
