@@ -298,3 +298,86 @@ class TestUrl:
             rc = cli.main(["-u", "http://host:9999", "submit", str(dag_file)])
         assert rc == 0
         assert req.call_args[0][1].startswith("http://host:9999")
+
+
+class TestGoalAndReflectionOutput:
+    """run 级目标 + 治理层判定（#41/#42）：submit --goal / status / report 展示。"""
+
+    @staticmethod
+    def _dag_file(tmp_path):
+        f = tmp_path / "dag.json"
+        f.write_text('{"tasks": {"t1": {"desc": "t1"}}}', encoding="utf-8")
+        return f
+
+    def test_submit_goal_flag(self, tmp_path):
+        captured = {}
+
+        def _fake(method, url, payload=None, timeout=15):
+            captured["payload"] = payload
+            return {"run_id": "r1", "status": "submitted"}
+
+        with mock.patch("orchestration.cli._request", side_effect=_fake):
+            rc = cli.main(["submit", str(self._dag_file(tmp_path)),
+                           "--goal", "整理成比价报告"])
+        assert rc == 0
+        assert captured["payload"]["goal"] == "整理成比价报告"
+
+    def test_submit_without_goal_omits_field(self, tmp_path):
+        captured = {}
+
+        def _fake(method, url, payload=None, timeout=15):
+            captured["payload"] = payload
+            return {"run_id": "r1", "status": "submitted"}
+
+        with mock.patch("orchestration.cli._request", side_effect=_fake):
+            cli.main(["submit", str(self._dag_file(tmp_path))])
+        assert "goal" not in captured["payload"]
+
+    def test_status_prints_goal(self, capsys):
+        snap = dict(SNAP, goal="整理成比价报告")
+        rc = run_cli(["status", "r1"], {"/api/runs/r1": snap}, capsys)
+        assert rc == 0
+        assert "目标: 整理成比价报告" in capsys.readouterr().out
+
+    def test_report_prints_verdict_and_gaps(self, capsys):
+        report = dict(REPORT, goal="整理成比价报告", reflection={
+            "enabled": True, "judged": True, "independent": True,
+            "judge_agent": "judge_bot", "achieved": False, "score": 0.4,
+            "reasons": ["只完成了抓取"], "gaps": ["最终比价报告"],
+        })
+        rc = run_cli(["report", "r1"], {"/api/runs/r1/report": report}, capsys)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "目标: 整理成比价报告" in out
+        assert "判定：未达成（score 0.4）" in out
+        assert "判定者 judge_bot" in out
+        assert "缺口：最终比价报告" in out
+
+    def test_report_prints_self_judge_marker(self, capsys):
+        report = dict(REPORT, reflection={
+            "enabled": True, "judged": True, "independent": False,
+            "judge_agent": "agent_001", "achieved": True, "score": 1.0,
+            "reasons": [], "gaps": [],
+        })
+        run_cli(["report", "r1"], {"/api/runs/r1/report": report}, capsys)
+        assert "非独立·自判" in capsys.readouterr().out
+
+    def test_report_prints_skipped_and_failed_judge(self, capsys):
+        skipped = dict(REPORT, reflection={
+            "enabled": False, "skipped_reason": "no_goal",
+        })
+        run_cli(["report", "r1"], {"/api/runs/r1/report": skipped}, capsys)
+        assert "判定：未执行（no_goal）" in capsys.readouterr().out
+
+        failed = dict(REPORT, reflection={
+            "enabled": True, "judged": True, "error_code": "timeout",
+            "error_message": ">120s",
+        })
+        run_cli(["report", "r1"], {"/api/runs/r1/report": failed}, capsys)
+        out = capsys.readouterr().out
+        assert "判定：未产出结论（timeout：>120s）" in out
+
+    def test_report_without_reflection_quiet(self, capsys):
+        """未注入判定 → 报告不打印判定块（保持既有输出）。"""
+        run_cli(["report", "r1"], {"/api/runs/r1/report": REPORT}, capsys)
+        assert "判定" not in capsys.readouterr().out

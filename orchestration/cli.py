@@ -133,7 +133,19 @@ def cmd_serve(args: argparse.Namespace) -> int:
             print(f"[serve] 未启用拆解引擎：{e}")
     else:
         print("[serve] 拆解引擎已禁用（--no-decompose）")
-    app, _ = create_app(registry, state_store=store, decomposer=decomposer)
+    # 治理层：反思/判定（run 带 goal 时按原始目标判定交付，advisory）
+    reflector = None
+    if args.no_reflect:
+        print("[serve] 反思/判定已禁用（--no-reflect）")
+    else:
+        from orchestration.reflection import Reflector
+
+        reflector = Reflector(registry)
+        print("[serve] 反思/判定已启用（提交带 --goal 时产出判定结论；"
+              "注册带 judge 能力的 agent 可得独立判定）")
+    app, _ = create_app(
+        registry, state_store=store, decomposer=decomposer, reflector=reflector
+    )
     if store:
         print(f"[serve] 断点持久化已启用：{args.state_store}"
               f"（resume / resolve 人工出口可用）")
@@ -235,6 +247,8 @@ def cmd_submit(args: argparse.Namespace) -> int:
     payload: dict = {"dag": dag}
     if args.run_id:
         payload["run_id"] = args.run_id
+    if args.goal:
+        payload["goal"] = args.goal
     resp = _request("POST", _api(args.url, "/api/runs"), payload)
     _session["run_id"] = resp["run_id"]
     print(f"run_id: {resp['run_id']}")
@@ -260,6 +274,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     resp = _request("GET", _api(args.url, f"/api/runs/{run_id}"))
     print(f"run {resp['run_id']}  {resp['status']}"
           f"  开始 {resp['started_at'] or '-'}  结束 {resp['finished_at'] or '-'}")
+    if resp.get("goal"):
+        print(f"目标: {resp['goal']}")
     rows = [[t["id"], t["status"], t["agent"] or "-"] for t in resp["tasks"]]
     print(_table(["task", "status", "agent"], rows))
     return 0
@@ -269,6 +285,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     run_id = _require_run_id(args)
     resp = _request("GET", _api(args.url, f"/api/runs/{run_id}/report"))
     print(f"final_status: {resp['final_status']}   总成本: ${resp['total_cost']}")
+    if resp.get("goal"):
+        print(f"目标: {resp['goal']}")
     rows = []
     for tid, r in resp["task_results"].items():
         err = (r.get("error") or {}).get("code", "") if not r["success"] else ""
@@ -289,7 +307,30 @@ def cmd_report(args: argparse.Namespace) -> int:
             print(f"  ✕ 根失败 {root.get('task_id')}（{root.get('reason', '')}）"
                   f" → 剪枝 {len(p['pruned'])} 个任务"
                   + ("（含最终任务，整棵取消）" if p["pruned_final"] else ""))
+    _print_reflection(resp.get("reflection"))
     return 0
+
+
+def _print_reflection(ref: dict | None) -> None:
+    """治理层判定结论（advisory）——目标是判定基准，结论不影响交付状态。"""
+    if not ref:
+        return
+    if not ref.get("enabled"):
+        print(f"\n判定：未执行（{ref.get('skipped_reason') or '未知原因'}）")
+        return
+    if ref.get("error_code"):
+        print(f"\n判定：未产出结论（{ref['error_code']}"
+              f"{'：' + ref['error_message'] if ref.get('error_message') else ''}）")
+        return
+    score = ref.get("score")
+    print(f"\n判定：{'达成' if ref.get('achieved') else '未达成'}"
+          + (f"（score {score}）" if score is not None else "")
+          + f"  判定者 {ref.get('judge_agent') or '-'}"
+          + ("" if ref.get("independent", True) else "（非独立·自判）"))
+    for r in ref.get("reasons") or []:
+        print(f"  · {r}")
+    for g in ref.get("gaps") or []:
+        print(f"  ✕ 缺口：{g}")
 
 
 def cmd_metrics(args: argparse.Namespace) -> int:
@@ -453,7 +494,7 @@ def _shell_help() -> None:
     print("  run_id 记忆        submit 后自动记住 run_id，status/report/等"
           "可省略")
     print("  decompose         目标 → DAG（--submit 一并提交）")
-    print("  submit            不带文件时引导式提问构建 DAG")
+    print("  submit            不带文件时引导式提问构建 DAG（--goal 传原始目标）")
     print("  resolve           缺 task_id/action 时逐项引导")
     print("  tab 补全          命令名 + 文件名；历史持久化 ~/.ao_history")
 
@@ -530,6 +571,8 @@ def _build_parser() -> argparse.ArgumentParser:
                          "需 $DEEPSEEK_API_KEY）")
     sp.add_argument("--no-decompose", action="store_true",
                     help="禁用规划层拆解引擎（POST /api/decompose 返回 400）")
+    sp.add_argument("--no-reflect", action="store_true",
+                    help="禁用治理层反思/判定（run 收尾不做目标达成度判定）")
     sp.add_argument("--host", default="0.0.0.0")
     sp.add_argument("--port", type=int, default=8000)
     sp.set_defaults(func=cmd_serve)
@@ -545,6 +588,8 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="DAG JSON：{\"tasks\": {id: {\"id\", \"desc\", \"deps\", ...}}}"
                          "（缺省交互构建）")
     sp.add_argument("--run-id")
+    sp.add_argument("--goal",
+                    help="用户原始目标（可选）——收尾时作为反思/判定的基准")
     sp.set_defaults(func=cmd_submit)
 
     for name, help_text, fn in [

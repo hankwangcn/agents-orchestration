@@ -320,14 +320,21 @@
       <div class="layer-head">
         <span class="layer-badge" style="--lc:#be185d">治理层</span>
         <span class="layer-en">GOVERN</span>
-        <span class="layer-desc">结果审计 + 成本核算 + 可观测性（对账与反馈的数据面）</span>
+        <span class="layer-desc">结果审计（确定性对账）+ 反思/判定（语义达成度，advisory）+ 成本核算 + 可观测性</span>
       </div>
       <div class="layer-body">
         <div class="card">
           <div class="badge" style="--cc:#be185d">审计</div>
           <div class="card-main">
             <div class="card-title">结果审计器 <span class="path">orchestration/audit.py</span></div>
-            <div class="card-desc">正确性对账（状态 vs 契约矛盾/缺契约/晚到结果）+ 分配审计（降级/风险）+ 剪枝审计 + 语义交叉校验（capability / side_effects 声明 vs 实际）。verdict 三级：ok / warning / critical。</div>
+            <div class="card-desc">正确性对账（状态 vs 契约矛盾/缺契约/晚到结果）+ 分配审计（降级/风险）+ 剪枝审计 + 语义交叉校验（capability / side_effects 声明 vs 实际）。verdict 三级：ok / warning / critical。<b>只读、可复跑、确定性</b>——审的是「状态机自洽性」，产出内容对不对交反思/判定（两者分离留痕）。</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="badge" style="--cc:#be185d">判定</div>
+          <div class="card-main">
+            <div class="card-title">反思/判定 <span class="path">orchestration/reflection.py</span></div>
+            <div class="card-desc">运行级语义判定：<b>最终交付 × 原始目标</b> → 达成/未达成 + score + 缺口。基准<b>只能是 goal</b>（子任务描述是框架自产的拆解产物，用作基准即自证循环），子任务结果仅作证据。判定者优先取注册表中声明 <span class="path">judge</span> 能力的独立 agent（能力经 info_request 采集，可异构模型），无则降级自判并标记 <span class="path">independent=false</span>。判定 = 一次普通 <span class="path">task_request</span>（消息类型零新增、agent 零变更），受 output_schema 强校验与解析重试约束。<b>advisory</b>：只写报告 + 喂学习，不改状态、不阻断、不自动重派；与确定性审计分离留痕，成本单列。</div>
           </div>
         </div>
         <div class="card">
@@ -355,8 +362,8 @@
         </svg>
       </div>
       <div class="flow-tag">
-        <span class="ft-main">AuditReport / PruneReport</span>
-        <span class="ft-sub">正确性 · 成本 · 剪枝证据（root_failure + pruned 清单）</span>
+        <span class="ft-main">AuditReport / PruneReport / ReflectionReport</span>
+        <span class="ft-sub">确定性对账 · 成本 · 剪枝证据（root_failure + pruned 清单）· 目标达成度（advisory）</span>
       </div>
     </div>
 
@@ -372,7 +379,7 @@
           <div class="badge" style="--cc:#4d7c0f">学习</div>
           <div class="card-main">
             <div class="card-title">学习引擎 <span class="path">orchestration/learning.py</span></div>
-            <div class="card-desc">启发式规则提取，阈值可配，产出「证据 + 动作建议」：REC（解析组件排查）/ FP（错误码频发换 agent）/ DEG（降级占比高，核对拆解建议）/ CAP（风险分配失败率高，重采能力）/ BUG（超预算）/ PRU（剪枝复盘拆解并行度）。</div>
+            <div class="card-desc">启发式规则提取，阈值可配，产出「证据 + 动作建议」：REC（解析组件排查）/ FP（错误码频发换 agent）/ DEG（降级占比高，核对拆解建议）/ CAP（风险分配失败率高，重采能力）/ BUG（超预算）/ PRU（剪枝复盘拆解并行度）/ INT（断点中断待人工）/ JUD（目标未达成 / 判定链路故障）。</div>
           </div>
         </div>
         <div class="card">
@@ -402,7 +409,7 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v1.8 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固 + 规划层接入与切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语）+ 执行层详细设计①②（output_schema 强校验 / info 采集超时）（目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理学习 → 崩溃恢复）· 347/347 测试全绿
+  <b>Agents Orchestration</b> · 架构 v1.9 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固 + 规划层接入与切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语）+ 执行层详细设计①②（output_schema 强校验 / info 采集超时）+ 治理层详细设计①（反思/判定：run 级目标 + 独立 judge）（目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习 → 崩溃恢复）· 387/387 测试全绿
 </footer>
 
 </div>

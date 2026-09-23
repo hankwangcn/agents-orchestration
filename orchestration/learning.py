@@ -1,17 +1,23 @@
 """自我学习（架构 §3.2 学习层；阶段二）。
 
-输入：AuditReport + CostReport（审计/成本核算产出的事实）。
-输出：LearningReport——启发式规则提取（失败模式 / 降级 / 风险分配 / 预算超支 / 剪枝质量）。
+输入：AuditReport + CostReport（审计/成本核算产出的事实）+ 可选
+ReflectionReport（治理层反思/判定结论——目标是否达成）。
+输出：LearningReport——启发式规则提取（失败模式 / 降级 / 风险分配 / 预算超支 /
+剪枝质量 / 目标达成度）。
 
-定位：把审计数字转成"可执行的拆解/分配优化建议"，规则带证据与动作建议，
-供阶段四及后续拆解优化闭环消费。纯规则引擎，不做 LLM 复盘——可观测、可测试。
+定位：把审计数字与判定结论转成"可执行的拆解/分配优化建议"，规则带证据与
+动作建议，供阶段四及后续拆解优化闭环消费。纯规则引擎，不做 LLM 复盘——
+可观测、可测试。
 """
 from __future__ import annotations
+
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from .audit import AuditReport
 from .cost import CostReport
+from .reflection import ReflectionReport
 
 
 class LearningRule(BaseModel):
@@ -19,6 +25,7 @@ class LearningRule(BaseModel):
     severity: str  # high | medium | low
     category: str  # failure_pattern | degraded_assignment | capability_risk
     #              | budget_overrun | pruning_quality | reconciliation
+    #              | goal_mismatch | reflection
     message: str
     evidence: dict = Field(default_factory=dict)
     action: str = ""
@@ -49,7 +56,12 @@ class LearningEngine:
 
     # ------------------------------------------------------------------
 
-    def learn(self, audit: AuditReport, cost: CostReport) -> LearningReport:
+    def learn(
+        self,
+        audit: AuditReport,
+        cost: CostReport,
+        reflection: Optional[ReflectionReport] = None,
+    ) -> LearningReport:
         out = LearningReport()
         self._learn_reconciliation(out, audit)
         self._learn_failure_patterns(out, audit)
@@ -58,6 +70,7 @@ class LearningEngine:
         self._learn_budget(out, cost)
         self._learn_pruning(out, audit)
         self._learn_interrupted(out, audit)
+        self._learn_reflection(out, reflection)
         return out
 
     # ------------------------------------------------------------------
@@ -206,3 +219,56 @@ class LearningEngine:
                 "根失败任务可降级/换 agent 重试"
             ),
         ))
+
+    def _learn_reflection(
+        self,
+        out: LearningReport,
+        reflection: Optional[ReflectionReport],
+    ) -> None:
+        """治理层判定结论 → 目标达成度规则（advisory，不改状态）。
+
+        - JUD-1：判定认为**目标未达成**——最上位的信号（过程全绿但交付没达
+          成目标，是拆解口径问题，不是执行问题）
+        - JUD-2：判定了但没拿到结论（判定链路故障 / 超时）——低优先级，
+          只提示判定能力本身需要修
+        """
+        if reflection is None or not reflection.enabled:
+            return
+        if reflection.achieved is False:
+            out.add(LearningRule(
+                rule_id="JUD-1",
+                severity="high",
+                category="goal_mismatch",
+                message=(
+                    "判定认为最终交付未达成原始目标"
+                    + ("（非独立判定，可靠性打折）" if not reflection.independent else "")
+                ),
+                evidence={
+                    "goal": reflection.goal,
+                    "score": reflection.score,
+                    "reasons": reflection.reasons,
+                    "gaps": reflection.gaps,
+                    "judge_agent": reflection.judge_agent,
+                    "independent": reflection.independent,
+                },
+                action=(
+                    "复盘拆解：目标里的交付物是否被拆成任务、依赖链是否覆盖到最终交付；"
+                    "gaps 中的缺项应成为新的交付任务"
+                ),
+            ))
+        elif reflection.error_code:
+            out.add(LearningRule(
+                rule_id="JUD-2",
+                severity="low",
+                category="reflection",
+                message=(
+                    f"判定未产出结论（{reflection.error_code}）："
+                    "判定链路故障，结果达成度未知"
+                ),
+                evidence={
+                    "judge_agent": reflection.judge_agent,
+                    "error_code": reflection.error_code,
+                    "error_message": reflection.error_message,
+                },
+                action="排查判定 agent 可用性 / 协议响应合规性，或放宽判定超时",
+            ))

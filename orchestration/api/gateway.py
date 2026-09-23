@@ -1,11 +1,14 @@
 """API 网关（阶段四：框架从"库"到"系统"的入口）。
 
-形态：FastAPI REST。职责：目标拆解（规划层 → DAG）、提交 DAG、查询进度、
-获取结果/审计、取消 run、查看 agent 注册表快照。协议面保持"框架永远主动"
-——网关只受理框架自己的请求，agent 侧的协议通信仍在适配器层，不暴露到 HTTP。
+形态：FastAPI REST。职责：目标拆解（规划层 → DAG）、提交 DAG（可选带原始
+目标）、查询进度、获取结果/审计、取消 run、查看 agent 注册表快照。协议面
+保持"框架永远主动"——网关只受理框架自己的请求，agent 侧的协议通信仍在
+适配器层，不暴露到 HTTP。
 
 RunManager 管理 run 生命周期（run_id → 后台 asyncio.Task + 状态快照），
-同一 AsyncScheduler 实例可并发运行多个 run（_RunCtx 状态隔离）。
+同一 AsyncScheduler 实例可并发运行多个 run（_RunCtx 状态隔离）。run 收尾后，
+若提交时给了原始目标且注入了 Reflector，则做一次目标达成度判定（治理层
+反思/判定，advisory——只写报告，不改状态不阻断）。
 """
 from __future__ import annotations
 
@@ -21,6 +24,7 @@ from ..decomposer import DecomposeError, Decomposer
 from ..dependency import DependencyGraph
 from ..metrics import MetricsCollector, configure_logging, log_event
 from ..models import DAG, Result, TaskStatus
+from ..reflection import Reflector
 from ..registry import AgentRegistry
 from ..scheduler_async import AsyncScheduler, ScheduleReport
 from ..state_store import StateStore
@@ -35,6 +39,7 @@ class RunHandle:
     """一次已提交 run 的句柄。"""
     run_id: str
     dag: DAG
+    goal: str = ""  # 用户原始目标（判定基准）；直接提交 DAG 且未传时为空
     status: str = "running"  # running | done | failed
     report: Optional[ScheduleReport] = None
     error: str = ""
@@ -59,11 +64,13 @@ class RunManager:
         metrics: Optional[MetricsCollector] = None,
         state_store: Optional[StateStore] = None,
         decomposer: Optional[Decomposer] = None,
+        reflector: Optional[Reflector] = None,
     ):
         self._registry = registry
         self._metrics = metrics or MetricsCollector()
         self._store = state_store
         self._decomposer = decomposer
+        self._reflector = reflector
         self._scheduler = AsyncScheduler(
             registry=registry,
             retries=retries,
@@ -72,18 +79,33 @@ class RunManager:
         )
         self._runs: dict[str, RunHandle] = {}
 
-    async def submit(self, dag: DAG, run_id: Optional[str] = None) -> str:
-        """提交 DAG 并立即返回 run_id（后台执行）。"""
+    async def submit(
+        self,
+        dag: DAG,
+        run_id: Optional[str] = None,
+        goal: Optional[str] = None,
+    ) -> str:
+        """提交 DAG 并立即返回 run_id（后台执行）。
+
+        goal：用户原始目标（可选）——提交时给定后随 run 持久化，收尾时作为
+        反思/判定的基准。直接提交现成 DAG（未走拆解）且不传时无基准，判定跳过。
+        """
         rid = run_id or uuid.uuid4().hex[:12]
         if rid in self._runs:
             raise ValueError(f"run_id 已存在：{rid}")
         if self._store is not None and self._store.has_run(rid):
             raise ValueError(f"run_id 已存在于存储中：{rid}")
-        handle = RunHandle(run_id=rid, dag=dag, cancel_event=asyncio.Event())
+        handle = RunHandle(
+            run_id=rid, dag=dag, goal=goal or "", cancel_event=asyncio.Event()
+        )
         handle.started_at = _now()
         self._runs[rid] = handle
+        if self._store is not None and handle.goal:
+            # 先落盘目标：调度器的事件驱动落盘（goal=None）随后保留该值
+            self._store.save_run(rid, dag, goal=handle.goal)
         handle.task = asyncio.create_task(self._run_background(handle))
-        log_event("run_submitted", run_id=rid, dag_size=len(dag.tasks))
+        log_event("run_submitted", run_id=rid, dag_size=len(dag.tasks),
+                  has_goal=bool(handle.goal))
         return rid
 
     async def _run_background(self, handle: RunHandle) -> None:
@@ -92,6 +114,7 @@ class RunManager:
                 handle.dag, run_id=handle.run_id,
                 cancel_event=handle.cancel_event,
             )
+            await self._attach_reflection(handle)
             handle.status = "done"
         except Exception as e:  # 调度器异常兜底（不应发生，防御）
             handle.error = str(e)
@@ -99,6 +122,31 @@ class RunManager:
             log_event("run_error", run_id=handle.run_id, error=str(e))
         finally:
             handle.finished_at = _now()
+
+    async def _attach_reflection(self, handle: RunHandle) -> None:
+        """治理层反思/判定：run 收尾后按原始目标判定最终交付（advisory）。
+
+        无目标 / 无判定 agent 时判定自身会跳过（不视为错误）；判定是 advisory，
+        任何异常都不得影响 run 的收尾状态。
+        """
+        if self._reflector is None or handle.report is None:
+            return
+        try:
+            rr = await self._reflector.areflect(
+                handle.goal, handle.report, run_id=handle.run_id
+            )
+        except Exception as e:  # 防御：判定永不阻断 run 收尾
+            log_event("reflection_error", run_id=handle.run_id, error=str(e))
+            return
+        handle.report.reflection = rr.model_dump()
+        log_event(
+            "run_reflected", run_id=handle.run_id, judged=rr.judged,
+            enabled=rr.enabled, achieved=rr.achieved,
+            independent=rr.independent, judge_agent=rr.judge_agent,
+            cost=rr.cost,
+        )
+        if self._store is not None:
+            self._store.save_report(handle.run_id, handle.report)
 
     # ---------- 规划层接入：目标 → DAG ----------
 
@@ -135,7 +183,7 @@ class RunManager:
         }
         log_event("goal_decomposed", dag_size=len(dag.tasks), submit=submit)
         if submit:
-            out["run_id"] = await self.submit(dag, run_id=run_id)
+            out["run_id"] = await self.submit(dag, run_id=run_id, goal=goal)
             out["status"] = "submitted"
         return out
 
@@ -146,6 +194,7 @@ class RunManager:
         handle = self._get(run_id)
         return {
             "run_id": run_id,
+            "goal": handle.goal,
             "status": handle.status,
             "started_at": handle.started_at,
             "finished_at": handle.finished_at,
@@ -170,6 +219,7 @@ class RunManager:
         assert report is not None
         return {
             "run_id": run_id,
+            "goal": handle.goal,
             "final_status": report.final_status,
             "total_cost": report.total_cost,
             "task_results": {
@@ -177,6 +227,7 @@ class RunManager:
             },
             "prune_reports": [p.model_dump() for p in report.prune_reports],
             "assignments": [a.model_dump() for a in report.assignments],
+            "reflection": report.reflection,
         }
 
     async def cancel(self, run_id: str) -> dict:
@@ -201,12 +252,15 @@ class RunManager:
             raise HTTPException(status_code=404, detail=f"run 不存在：{run_id}")
         if run_id in self._runs and self._runs[run_id].status == "running":
             raise HTTPException(status_code=409, detail="run 已在运行中")
-        dag = self._store.load_run(run_id)["dag"]
-        handle = RunHandle(run_id=run_id, dag=dag, cancel_event=asyncio.Event())
+        data = self._store.load_run(run_id)
+        handle = RunHandle(
+            run_id=run_id, dag=data["dag"], goal=data.get("goal", ""),
+            cancel_event=asyncio.Event(),
+        )
         handle.started_at = _now()
         self._runs[run_id] = handle
         handle.task = asyncio.create_task(self._run_background_resume(handle))
-        log_event("run_resume_requested", run_id=run_id)
+        log_event("run_resume_requested", run_id=run_id, has_goal=bool(handle.goal))
         return run_id
 
     async def _run_background_resume(self, handle: RunHandle) -> None:
@@ -215,6 +269,7 @@ class RunManager:
                 handle.run_id, cancel_event=handle.cancel_event
             )
             handle.dag = handle.report.dag  # 同步为调度器实际推进的对象
+            await self._attach_reflection(handle)
             handle.status = "done"
         except Exception as e:  # 调度器异常兜底（防御）
             handle.error = str(e)
@@ -367,6 +422,11 @@ class RunManager:
 class DagSubmit(BaseModel):
     dag: dict = Field(description="DAG JSON（tasks: {id: {desc, deps, ...}}）")
     run_id: Optional[str] = None
+    goal: Optional[str] = Field(
+        default=None,
+        description="用户原始目标（可选）——收尾时作为反思/判定的基准；"
+                    "直接提交现成 DAG 时建议一并给出",
+    )
 
 
 class DecomposeRequest(BaseModel):
@@ -386,16 +446,19 @@ def create_app(
     metrics: Optional[MetricsCollector] = None,
     state_store: Optional[StateStore] = None,
     decomposer: Optional[Decomposer] = None,
+    reflector: Optional[Reflector] = None,
 ) -> tuple[FastAPI, RunManager]:
     """构造 (app, manager)。registry 需已注册 agent（可先 collect 能力声明）。
 
     state_store：启用断点持久化（SQLite 等），提供 resume / resolve 端点。
     decomposer：启用规划层拆解（POST /api/decompose）——未注入则端点返回 400。
+    reflector：启用治理层反思/判定（run 收尾后按 goal 判定交付，advisory）——
+    未注入则不做判定。
     """
     configure_logging()
     manager = RunManager(
         registry, retries=retries, metrics=metrics, state_store=state_store,
-        decomposer=decomposer,
+        decomposer=decomposer, reflector=reflector,
     )
     app = FastAPI(
         title="Agents Orchestration Gateway",
@@ -405,9 +468,12 @@ def create_app(
 
     @app.post("/api/runs", status_code=201)
     async def submit_run(payload: DagSubmit) -> dict:
-        """提交 DAG，返回 run_id（后台执行）。"""
+        """提交 DAG，返回 run_id（后台执行）。
+
+        可选给 goal：提交后随 run 持久化，收尾时作为反思/判定的基准。
+        """
         dag = DAG.model_validate(payload.dag)
-        run_id = await manager.submit(dag, run_id=payload.run_id)
+        run_id = await manager.submit(dag, run_id=payload.run_id, goal=payload.goal)
         return {"run_id": run_id, "status": "submitted"}
 
     @app.post("/api/decompose")

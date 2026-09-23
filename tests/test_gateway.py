@@ -8,6 +8,7 @@ import time
 from orchestration.api.gateway import RunManager, create_app
 from orchestration.decomposer import Decomposer
 from orchestration.models import DAG, Task, TaskStatus
+from orchestration.reflection import Reflector
 from orchestration.registry import AgentRegistry
 
 from helpers import AsyncScriptedAdapter, ok
@@ -248,10 +249,6 @@ class TestDecompose:
 class TestGatewayAPI:
     def test_submit_status_report_flow(self):
         """HTTP 端到端：提交 → 轮询状态 → 报告。"""
-        dag = DAG(tasks={
-            "a": Task(id="a", desc="a"),
-            "b": Task(id="b", desc="b", deps=["a"]),
-        })
         adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
         reg = AgentRegistry()
         reg.register(adapter)
@@ -307,3 +304,124 @@ class TestGatewayAPI:
             resp = client.get("/api/agents")
             assert resp.status_code == 200
             assert "agent_001" in resp.json()
+
+
+class TestGoalAndReflection:
+    """run 级目标 + 治理层判定（#41/#42）：提交带 goal → 收尾按目标判定交付。"""
+
+    JUDGE_VERDICT = {"achieved": False, "score": 0.4,
+                     "reasons": ["只看到中间数据，最终报告缺失"],
+                     "gaps": ["最终比价报告"]}
+
+    def _manager(self):
+        main = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
+        judge = AsyncScriptedAdapter(
+            {"__reflection__": [ok("__reflection__", self.JUDGE_VERDICT)]},
+            model="judge-model",
+        )
+        reg = AgentRegistry()
+        reg.register(main)
+        reg.register(judge, agent_id="judge_bot")
+        reg.get("judge_bot").capabilities = ["judge"]  # 能力是问出来的/采集的
+        return RunManager(registry=reg, reflector=Reflector(reg)), reg
+
+    @staticmethod
+    def _dag():
+        return DAG(tasks={
+            "a": Task(id="a", desc="a"),
+            "b": Task(id="b", desc="b", deps=["a"]),
+        })
+
+    def test_report_carries_goal_and_verdict(self):
+        """goal 随 run 走；判定结论进报告；advisory 不改交付状态。"""
+        manager, _ = self._manager()
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="把数据整理成比价报告")
+            return rid, await manager.wait(rid)
+
+        rid, report = asyncio.run(_flow())
+
+        assert manager.snapshot(rid)["goal"] == "把数据整理成比价报告"
+        payload = manager.report(rid)
+        assert payload["goal"] == "把数据整理成比价报告"
+
+        ref = payload["reflection"]
+        assert ref["judged"] is True
+        assert ref["achieved"] is False        # 过程全绿（success）但目标未达成
+        assert ref["gaps"] == ["最终比价报告"]
+        assert ref["judge_agent"] == "judge_bot"
+        assert ref["independent"] is True
+        # advisory：不改状态、不阻断——交付仍按调度结果收尾
+        assert report.final_status == "success"
+        assert report.total_cost == 0.02       # 判定成本单列，不计入任务成本
+
+    def test_no_goal_skips_reflection(self):
+        """未给 goal → 无基准可判，跳过（记录原因，不报错）。"""
+        manager, _ = self._manager()
+
+        async def _flow():
+            rid = await manager.submit(self._dag())
+            return await manager.wait(rid)
+
+        report = asyncio.run(_flow())
+        assert report.reflection["enabled"] is False
+        assert report.reflection["skipped_reason"] == "no_goal"
+
+    def test_no_reflector_leaves_report_clean(self):
+        """未注入 Reflector → 不做判定（框架其余功能不受影响）。"""
+        adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
+        reg = AgentRegistry()
+        reg.register(adapter)
+        manager = RunManager(registry=reg)
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="目标")
+            return await manager.wait(rid)
+
+        report = asyncio.run(_flow())
+        assert report.reflection is None
+        assert report.final_status == "success"
+
+    def test_reflection_failure_does_not_break_run(self):
+        """判定链路整体异常 → run 仍正常收尾（advisory 不阻断）。"""
+        main = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
+        reg = AgentRegistry()
+        reg.register(main)
+        manager = RunManager(registry=reg, reflector=Reflector(reg))
+
+        class Boom(Reflector):
+            async def areflect(self, goal, report, run_id=""):
+                raise RuntimeError("judge blew up")
+
+        manager._reflector = Boom(reg)
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="目标")
+            return await manager.wait(rid)
+
+        report = asyncio.run(_flow())
+        assert report.final_status == "success"
+        assert report.reflection is None  # 判定失败，但交付正常
+
+    def test_http_submit_with_goal(self):
+        """HTTP 端到端：POST /api/runs 带 goal → 快照可见目标。"""
+        manager, reg = self._manager()
+        app, _ = create_app(reg, reflector=Reflector(reg))
+
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            resp = client.post("/api/runs", json={
+                "dag": {"tasks": {"a": {"id": "a", "desc": "a"}}},
+                "goal": "生成比价报告",
+            })
+            assert resp.status_code == 201
+            run_id = resp.json()["run_id"]
+            snap = None
+            for _ in range(100):
+                snap = client.get(f"/api/runs/{run_id}").json()
+                if snap["status"] != "running":
+                    break
+                time.sleep(0.02)
+            assert snap["goal"] == "生成比价报告"
+            assert snap["status"] == "done"

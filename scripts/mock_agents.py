@@ -23,6 +23,10 @@ adapter.model = agent_id 即角色名）。
 1. 独立进程：.venv/bin/python scripts/mock_agents.py   # 常驻 127.0.0.1:8701
 2. 进程内（冒烟用）：server = MockAgentServer(configs)
    await server.start(); ...; await server.stop()
+
+角色阵容：default_configs()（translator / coder / analyst / flaky，供
+smoke_multiagent 用）、judge_configs()（默认阵容 + judge 判定角色，供
+smoke_reflection 用——判定能力经 info_request 采集，反思模块据此选独立判定者）。
 """
 from __future__ import annotations
 
@@ -102,6 +106,15 @@ class MockAgentConfig:
             }
         if self.output_kind == "analyst":
             return {"analysis": f"analyzed: {task_desc[:60]}", "confidence": 0.9}
+        if self.output_kind == "judge":
+            # 判定角色：按 output_schema（VERDICT_SCHEMA）应答。确定性结论——
+            # 冒烟要可复现，不做真实推理（真实判定 agent 由用户接入）
+            return {
+                "achieved": False,
+                "score": 0.35,
+                "reasons": ["mock 判定：交付物未完全覆盖目标要求"],
+                "gaps": ["缺少最终交付物"],
+            }
         return {"result": f"{task_id}: done"}
 
 
@@ -296,6 +309,22 @@ def default_configs() -> list[MockAgentConfig]:
             agent_id="flaky", capabilities=["general"],
             description="易故障 agent（故障注入演示）", max_concurrency=1,
             output_kind="generic", fail_first_n=9,
+        ),
+    ]
+
+
+def judge_configs() -> list[MockAgentConfig]:
+    """默认阵容 + 判定角色（治理层反思/判定冒烟用；不影响 default_configs）。
+
+    判定能力标签为 judge——框架按"能力是问出来的"经 info_request 采集到后，
+    反思模块优先选它作独立判定者（异构模型：不参与任务执行）。
+    """
+    return default_configs() + [
+        MockAgentConfig(
+            agent_id="judge", capabilities=["judge", "reasoning"],
+            description="独立判定 agent（按目标判定交付达成度）",
+            max_concurrency=1, rate_limit_per_min=30,
+            output_kind="judge",
         ),
     ]
 

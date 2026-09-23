@@ -227,6 +227,8 @@ class ScheduleReport(BaseModel):
     阶段一同步调度器与阶段四异步调度器共用此契约；
     审计器 / 成本核算 / 学习引擎统一消费它。
     final_status：success | partial | failed | cancelled（阶段四外部取消）。
+    reflection：治理层判定结论（反思/判定模块产出，advisory）——未启用
+    判定或无原始目标时为 None；运行级，挂在报告上供审计/学习/人工消费。
     """
     dag: DAG
     results: dict[str, Result] = Field(default_factory=dict)
@@ -234,3 +236,4 @@ class ScheduleReport(BaseModel):
     assignments: list[Assignment] = Field(default_factory=list)
     total_cost: float = 0.0
     final_status: str = "success"
+    reflection: Optional[dict] = None

@@ -31,6 +31,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
     run_id      TEXT PRIMARY KEY,
     dag_json    TEXT NOT NULL,
+    goal        TEXT NOT NULL DEFAULT '',
     run_status  TEXT NOT NULL DEFAULT 'running',
     prune_json  TEXT NOT NULL DEFAULT '[]',
     report_json TEXT,
@@ -56,6 +57,7 @@ class StateStore(ABC):
         self,
         run_id: str,
         dag: DAG,
+        goal: Optional[str] = None,
         run_status: Optional[str] = None,
         assignments: Optional[list[Assignment]] = None,
         prune_reports: Optional[list[PruneReport]] = None,
@@ -66,7 +68,7 @@ class StateStore(ABC):
 
     @abstractmethod
     def load_run(self, run_id: str) -> dict:
-        """返回 {dag, assignments: {tid: Assignment}, prune_reports}。"""
+        """返回 {dag, goal, assignments: {tid: Assignment}, prune_reports}。"""
 
     @abstractmethod
     def has_run(self, run_id: str) -> bool: ...
@@ -89,7 +91,18 @@ class SqliteStateStore(StateStore):
         self._conn.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """既有库补列（CREATE TABLE IF NOT EXISTS 不会给旧表加列）。"""
+        cols = {
+            r["name"] for r in self._conn.execute("PRAGMA table_info(runs)")
+        }
+        if "goal" not in cols:
+            self._conn.execute(
+                "ALTER TABLE runs ADD COLUMN goal TEXT NOT NULL DEFAULT ''"
+            )
 
     # ------------------------------------------------------------------
 
@@ -97,29 +110,36 @@ class SqliteStateStore(StateStore):
         self,
         run_id: str,
         dag: DAG,
+        goal: Optional[str] = None,
         run_status: Optional[str] = None,
         assignments: Optional[list[Assignment]] = None,
         prune_reports: Optional[list[PruneReport]] = None,
     ) -> None:
-        """事件驱动整存：DAG（含每任务 status/result）+ 可选 assignment/prune。"""
+        """事件驱动整存：DAG（含每任务 status/result）+ 可选 assignment/prune。
+
+        goal / run_status 传 None 表示"保留原值"（调度器的频繁落盘不该覆盖
+        提交时写入的 goal，resolve 等局部变更不该覆盖调度状态）。
+        """
         now = _ts()
         with self._lock:
+            row = self._conn.execute(
+                "SELECT run_status, goal FROM runs WHERE run_id=?", (run_id,)
+            ).fetchone()
             if run_status is None:
-                # 保留已有 run_status（resolve 等局部变更不覆盖调度状态）
-                row = self._conn.execute(
-                    "SELECT run_status FROM runs WHERE run_id=?", (run_id,)
-                ).fetchone()
                 run_status = row["run_status"] if row else "running"
+            if goal is None:
+                goal = row["goal"] if row else ""
             self._conn.execute(
                 """
-                INSERT INTO runs (run_id, dag_json, run_status, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO runs (run_id, dag_json, goal, run_status, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(run_id) DO UPDATE SET
                     dag_json=excluded.dag_json,
+                    goal=excluded.goal,
                     run_status=excluded.run_status,
                     updated_at=excluded.updated_at
                 """,
-                (run_id, dag.model_dump_json(), run_status, now),
+                (run_id, dag.model_dump_json(), goal, run_status, now),
             )
             if assignments is not None:
                 self._conn.execute(
@@ -161,7 +181,7 @@ class SqliteStateStore(StateStore):
     def load_run(self, run_id: str) -> dict:
         with self._lock:
             row = self._conn.execute(
-                "SELECT dag_json, run_status, prune_json FROM runs WHERE run_id=?",
+                "SELECT dag_json, goal, run_status, prune_json FROM runs WHERE run_id=?",
                 (run_id,),
             ).fetchone()
             if row is None:
@@ -184,6 +204,7 @@ class SqliteStateStore(StateStore):
             ]
         return {
             "dag": dag,
+            "goal": row["goal"] or "",
             "run_status": row["run_status"],
             "assignments": assignments,
             "prune_reports": prune_reports,

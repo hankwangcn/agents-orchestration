@@ -15,6 +15,7 @@ from orchestration.models import (
     Task,
     TaskStatus,
 )
+from orchestration.reflection import ReflectionReport
 from orchestration.registry import AgentRegistry
 from orchestration.scheduler import Scheduler, ScheduleReport
 
@@ -273,3 +274,64 @@ class TestInterruptedRule:
         report = run_audit_cost(dag, {"a": [ok("a")]})
         audit, cost = report
         assert "INT-1" not in rule_ids(learn(audit, cost))
+
+
+# ---------------------------------------------------------------------------
+# 判定结论规则（治理层反思/判定 → 学习层）
+# ---------------------------------------------------------------------------
+
+class TestReflectionRules:
+    """JUD-1（目标未达成）/ JUD-2（判定未产出结论）。"""
+
+    @staticmethod
+    def _base():
+        report = run_audit_cost(dag_of(("a", [])), {"a": [ok("a")]})
+        return report  # (audit, cost)
+
+    def test_jud1_when_goal_not_achieved(self):
+        """过程全绿但判定认为目标未达成 → JUD-1（high，最上位信号）。"""
+        audit, cost = self._base()
+        ref = ReflectionReport(
+            goal="整理成比价报告", judged=True, judge_agent="judge_bot",
+            achieved=False, score=0.3,
+            reasons=["只完成了抓取"], gaps=["最终比价报告"],
+        )
+        rules = LearningEngine().learn(audit, cost, ref).rules
+        rule = next(r for r in rules if r.rule_id == "JUD-1")
+
+        assert rule.severity == "high"
+        assert rule.category == "goal_mismatch"
+        assert rule.evidence["gaps"] == ["最终比价报告"]
+        assert rule.evidence["goal"] == "整理成比价报告"
+
+    def test_jud1_marks_non_independent_judge(self):
+        """降级自判的未达成结论要标注可靠性打折。"""
+        audit, cost = self._base()
+        ref = ReflectionReport(goal="G", judged=True, independent=False,
+                              achieved=False)
+        rule = next(r for r in LearningEngine().learn(audit, cost, ref).rules
+                    if r.rule_id == "JUD-1")
+        assert "非独立判定" in rule.message
+
+    def test_no_jud1_when_achieved(self):
+        audit, cost = self._base()
+        ref = ReflectionReport(goal="G", judged=True, achieved=True, score=1.0)
+        assert "JUD-1" not in rule_ids(LearningEngine().learn(audit, cost, ref).rules)
+
+    def test_jud2_when_judge_failed(self):
+        """判定链路故障 → JUD-2（low，只提示判定能力本身要修）。"""
+        audit, cost = self._base()
+        ref = ReflectionReport(goal="G", judged=True, judge_agent="judge_bot",
+                              error_code="timeout", error_message=">120s")
+        rule = next(r for r in LearningEngine().learn(audit, cost, ref).rules
+                    if r.rule_id == "JUD-2")
+        assert rule.severity == "low"
+        assert rule.evidence["error_code"] == "timeout"
+
+    def test_no_rules_without_reflection(self):
+        """未启用判定（无目标）→ 不产生任何判定规则。"""
+        audit, cost = self._base()
+        assert "JUD-1" not in rule_ids(learn(audit, cost))
+        skipped = ReflectionReport(enabled=False, skipped_reason="no_goal")
+        assert not [r for r in LearningEngine().learn(audit, cost, skipped).rules
+                    if r.rule_id.startswith("JUD-")]

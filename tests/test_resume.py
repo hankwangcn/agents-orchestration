@@ -73,6 +73,37 @@ class TestStateStore:
         assert not store.has_run("r1")
         assert store.has_run("r2")
 
+    def test_goal_persisted_and_preserved(self, tmp_path):
+        """run 级目标（判定基准）落盘；调度器的频繁落盘不覆盖它。"""
+        store = SqliteStateStore(str(tmp_path / "s.db"))
+        dag = DAG(tasks={"a": Task(id="a", desc="a")})
+        store.save_run("r1", dag, goal="把抓取到的价格整理成比价报告")
+        assert store.load_run("r1")["goal"] == "把抓取到的价格整理成比价报告"
+        # goal 缺省 None = 保留原值（调度器事件驱动落盘 / resolve 局部变更）
+        store.save_run("r1", dag, run_status="running")
+        assert store.load_run("r1")["goal"] == "把抓取到的价格整理成比价报告"
+
+    def test_legacy_db_migrates_goal_column(self, tmp_path):
+        """既有库无 goal 列 → 打开时自动补列（CREATE TABLE IF NOT EXISTS 不补）。"""
+        import sqlite3
+        path = str(tmp_path / "old.db")
+        conn = sqlite3.connect(path)
+        conn.executescript(
+            "CREATE TABLE runs (run_id TEXT PRIMARY KEY, dag_json TEXT NOT NULL,"
+            " run_status TEXT NOT NULL DEFAULT 'running',"
+            " prune_json TEXT NOT NULL DEFAULT '[]', report_json TEXT,"
+            " updated_at TEXT);"
+        )
+        conn.execute("INSERT INTO runs (run_id, dag_json) VALUES ('r1', ?)",
+                     ('{"tasks": {}}',))
+        conn.commit()
+        conn.close()
+
+        store = SqliteStateStore(path)          # 触发迁移
+        assert store.load_run("r1")["goal"] == ""
+        store.save_run("r1", DAG(tasks={"a": Task(id="a", desc="a")}), goal="G")
+        assert store.load_run("r1")["goal"] == "G"
+
     def test_memory_store(self):
         store = SqliteStateStore(":memory:")
         store.save_run("r1", DAG(tasks={"a": Task(id="a", desc="a")}))
@@ -258,6 +289,36 @@ class TestGatewayResume:
             report = client.get("/api/runs/r1/report").json()
             assert report["final_status"] == "success"
             assert set(report["task_results"]) == {"a", "b"}
+
+    def test_resume_restores_goal_and_reflects(self, tmp_path):
+        """goal 随 run 持久化 → resume 后仍在，收尾判定用同一基准。"""
+        from orchestration.reflection import Reflector
+        store = SqliteStateStore(str(tmp_path / "g.db"))
+        store.save_run("r1", DAG(tasks={
+            "a": Task(id="a", desc="a", status=TaskStatus.PENDING),
+        }), goal="把抓取到的价格整理成比价报告")
+        main = AsyncScriptedAdapter({"a": [ok("a")]})
+        judge = AsyncScriptedAdapter(
+            {"__reflection__": [ok("__reflection__", {
+                "achieved": True, "score": 1.0,
+                "reasons": ["报告已产出"], "gaps": [],
+            })]},
+            model="judge-model",
+        )
+        reg = AgentRegistry()
+        reg.register(main)
+        reg.register(judge, agent_id="judge_bot")
+        reg.get("judge_bot").capabilities = ["judge"]
+        from orchestration.api.gateway import create_app
+        app, _ = create_app(reg, state_store=store, reflector=Reflector(reg))
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            assert client.post("/api/runs/r1/resume").status_code == 200
+            self._wait_done(client, "r1")
+            payload = client.get("/api/runs/r1/report").json()
+            assert payload["goal"] == "把抓取到的价格整理成比价报告"
+            assert payload["reflection"]["achieved"] is True
+            assert payload["reflection"]["judge_agent"] == "judge_bot"
 
     def test_resolve_non_interrupted_conflict(self, tmp_path):
         """非 INTERRUPTED 任务 resolve → 409。"""
