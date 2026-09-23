@@ -26,7 +26,7 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Iterable, Optional
 
 
 from .adapters.base import AgentAdapter
@@ -539,22 +539,15 @@ class AsyncScheduler:
     # 取消（竞态处理，架构 §5.3）
     # ------------------------------------------------------------------
 
-    async def _dispatch_cancels(
-        self,
-        ctx: _RunCtx,
-        report: PruneReport,
-        pending: dict[str, asyncio.Task],
-    ) -> None:
-        """对剪枝时仍在运行的任务逐级下发取消（best-effort）。
+    async def _send_cancel(self, ctx: _RunCtx, tids: Iterable[str]) -> None:
+        """对指定任务下发 best-effort 取消（统一原语，两路取消共用）。
 
-        流程：先冻结新派发（frozen=True 已置）→ 这里逐级下发 →
-        外层等待 pending 全部收尾 → 统一解冻。
-        无论 agent 是否履约，晚到结果都会被丢弃（状态已是 CANCELLED）。
+        取消走分配时记录的 agent（ctx.task_agent），不重新分配。best-effort
+        语义：agent 是否履约都不阻塞收尾——晚到结果由状态机丢弃（任务已是
+        CANCELLED）。失败不静默吞掉：保留 `cancel_failed` 可观测（内部剪枝
+        与外部整棵取消共用同一日志口径）。
         """
-        for p in report.pruned:
-            if p["state_at_cancel"] != TaskStatus.RUNNING.value:
-                continue
-            tid = p["task_id"]
+        for tid in tids:
             agent_id = ctx.task_agent.get(tid)
             if agent_id is None:
                 continue
@@ -568,6 +561,24 @@ class AsyncScheduler:
                     "cancel_failed", run_id=ctx.run_id, task_id=tid,
                     error=str(e), best_effort=True,
                 )
+
+    async def _dispatch_cancels(
+        self,
+        ctx: _RunCtx,
+        report: PruneReport,
+        pending: dict[str, asyncio.Task],
+    ) -> None:
+        """对剪枝时仍在运行的任务逐级下发取消（best-effort）。
+
+        流程：先冻结新派发（frozen=True 已置）→ 这里逐级下发 →
+        外层等待 pending 全部收尾 → 统一解冻。
+        无论 agent 是否履约，晚到结果都会被丢弃（状态已是 CANCELLED）。
+        """
+        running = [
+            p["task_id"] for p in report.pruned
+            if p["state_at_cancel"] == TaskStatus.RUNNING.value
+        ]
+        await self._send_cancel(ctx, running)
 
     async def _cancel_all(
         self,
@@ -584,16 +595,7 @@ class AsyncScheduler:
                 # 置终态：晚到结果由 _execute_with_retry 检测到 CANCELLED 丢弃
                 t.status = TaskStatus.CANCELLED
                 running_ids.append(tid)
-        for tid in running_ids:
-            agent_id = ctx.task_agent.get(tid)
-            if agent_id is None:
-                continue
-            try:
-                await self._registry.get_adapter(agent_id).acancel(
-                    task_id=tid, request_id=f"{tid}:cancel"
-                )
-            except Exception:
-                pass  # best-effort
+        await self._send_cancel(ctx, running_ids)
         if pending:
             await asyncio.gather(*pending.values(), return_exceptions=True)
         self._persist(ctx)  # 外部取消落盘

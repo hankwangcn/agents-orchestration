@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import threading
+from typing import Iterable
 
 from .models import (
     DAG,
@@ -38,11 +39,9 @@ class Scheduler:
         self,
         registry: AgentRegistry,
         retries: int = 2,
-        backoff_base: float = 1.0,
     ):
         self._registry = registry
         self.retries = retries
-        self.backoff_base = backoff_base
 
     # ------------------------------------------------------------------
 
@@ -171,22 +170,33 @@ class Scheduler:
             inputs[dep] = dep_task.result.output if dep_task.result else None
         return inputs
 
+    def _send_cancel(self, tids: Iterable[str]) -> None:
+        """对指定任务下发 best-effort 取消（统一原语）。
+
+        契约预留：同步模型逐任务串行执行，剪枝时不存在 RUNNING 任务，
+        故当前无调用点会真正进入循环体——保留以与 AsyncScheduler 的取消
+        口径对齐（异步路径见 scheduler_async._send_cancel）。
+        """
+        for tid in tids:
+            agent_id = self._task_agent.get(tid)
+            if agent_id is None:
+                continue
+            self._registry.get_adapter(agent_id).cancel(
+                task_id=tid,
+                request_id=f"{tid}:cancel",
+            )
+
     def _dispatch_cancels(self, dag: DAG, report: PruneReport) -> None:
         """对剪枝时仍在运行的任务下发取消（best-effort，架构 §5.3）。
 
         同步模型下剪枝时无 running 任务，此逻辑为并发模型（阶段四）预留。
         取消走分配时的 agent（_task_agent 记录），不重新分配。
         """
-        for p in report.pruned:
-            if p["state_at_cancel"] != TaskStatus.RUNNING.value:
-                continue
-            agent_id = self._task_agent.get(p["task_id"])
-            if agent_id is None:
-                continue
-            self._registry.get_adapter(agent_id).cancel(
-                task_id=p["task_id"],
-                request_id=f"{p['task_id']}:cancel",
-            )
+        running = [
+            p["task_id"] for p in report.pruned
+            if p["state_at_cancel"] == TaskStatus.RUNNING.value
+        ]
+        self._send_cancel(running)
 
     @staticmethod
     def _final_status(dag: DAG, prune_reports: list[PruneReport]) -> str:

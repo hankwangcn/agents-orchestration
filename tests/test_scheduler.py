@@ -7,6 +7,8 @@
 import time
 from typing import Optional
 
+import pytest
+
 from orchestration.adapters.base import AgentAdapter
 from orchestration.models import (
     DAG,
@@ -418,3 +420,21 @@ class TestFrameworkTimeout:
         sched, _ = make_scheduler(adapter, retries=0)
         report = sched.run(dag)
         assert report.final_status == "success"
+
+
+# ---------------------------------------------------------------------------
+# 死参清理（#36：同步 Scheduler 的 backoff_base 存了不用）
+# ---------------------------------------------------------------------------
+
+class TestNoDeadBackoffParam:
+    def test_backoff_base_param_removed(self):
+        """同步调度器顺序执行、无重试退避，backoff_base 死参已删除。"""
+        reg = AgentRegistry()
+        with pytest.raises(TypeError):
+            Scheduler(registry=reg, backoff_base=0.0)
+
+    def test_constructor_signature_unchanged_otherwise(self):
+        """删除死参不影响既有构造方式（registry + retries）。"""
+        reg = AgentRegistry()
+        sched = Scheduler(registry=reg, retries=1)
+        assert sched.retries == 1

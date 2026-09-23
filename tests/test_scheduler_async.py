@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 from orchestration.metrics import MetricsCollector
@@ -19,7 +20,7 @@ from orchestration.models import (
     TaskStatus,
 )
 from orchestration.registry import AgentRegistry
-from orchestration.scheduler_async import AsyncScheduler
+from orchestration.scheduler_async import AsyncScheduler, _RunCtx
 from helpers import AsyncScriptedAdapter, ConcurrencyProbeAdapter, ok, fail, dag_of
 
 
@@ -580,3 +581,82 @@ class TestFrameworkTimeout:
         assert dag.tasks["b"].status == TaskStatus.CANCELLED  # 下游剪枝
         assert report.prune_reports and report.prune_reports[0].pruned_final
         assert report.final_status == "failed"
+
+
+# ---------------------------------------------------------------------------
+# 取消下发统一原语（#36：消重复 + 统一 cancel_failed 可观测）
+# ---------------------------------------------------------------------------
+
+class CancelFailAdapter(AsyncScriptedAdapter):
+    """取消下发恒失败：验证 best-effort 不静默吞掉（两路取消共用日志口径）。"""
+
+    async def acancel(self, task_id: str, request_id: str) -> Result:
+        raise RuntimeError("agent unreachable")
+
+
+class TestUnifiedCancelPrimitive:
+    """#36：内部剪枝与外部整棵取消共用 `_send_cancel`。
+
+    回归点：两条取消路径曾各写一份循环，且外部路径用 `except: pass`
+    静默吞掉失败——统一后两路都保留 `cancel_failed` 可观测。
+    """
+
+    def _info_logs(self, caplog):
+        caplog.set_level(logging.INFO, logger="orchestration.scheduler")
+        logging.getLogger("orchestration").setLevel(logging.INFO)
+
+    def test_prune_path_logs_cancel_failed(self, caplog):
+        """内部剪枝路径：取消失败记录 cancel_failed（不静默）。"""
+        self._info_logs(caplog)
+        dag = dag_of(("a", []), ("b", ["a"]), ("c", ["a"]), ("d", ["b", "c"]))
+        adapter = CancelFailAdapter({
+            "a": [ok("a")],
+            "b": [fail("b")],
+            "c": [ok("c")],
+            "d": [ok("d")],
+        })
+        adapter.script_delay = {"c": 0.2}  # b 失败剪枝时 c 仍在 RUNNING
+        sched, _ = make_scheduler(adapter, retries=0)
+
+        run(sched, dag)
+
+        assert dag.tasks["c"].status == TaskStatus.CANCELLED
+        assert "cancel_failed" in caplog.text
+
+    def test_cancel_all_path_logs_cancel_failed(self, caplog):
+        """外部整棵取消路径：取消失败记录 cancel_failed（修复前 except: pass）。"""
+        self._info_logs(caplog)
+        dag = dag_of(("a", []), ("b", []))
+        adapter = CancelFailAdapter({"a": [ok("a")], "b": [ok("b")]})
+        adapter.script_delay = {"a": 0.05, "b": 0.5}  # a 先完成时 b 仍 RUNNING
+        sched, reg = make_scheduler(adapter)
+        reg.get("agent_001").max_concurrency = 2
+        ev = asyncio.Event()
+
+        async def _run_then_cancel():
+            t = asyncio.create_task(sched.run(dag, run_id="r1", cancel_event=ev))
+            await asyncio.sleep(0.02)  # 取消在 a 完成前置位
+            ev.set()
+            return await t
+
+        report = asyncio.run(_run_then_cancel())
+
+        assert report.final_status == "cancelled"
+        assert "cancel_failed" in caplog.text
+
+    def test_send_cancel_skips_task_without_agent_mapping(self):
+        """无分配记录的任务不下发取消（原语内 defensive 跳过，不抛错）。"""
+        adapter = AsyncScriptedAdapter({})
+        sched, _ = make_scheduler(adapter)
+        ctx = _RunCtx(run_id="r1", dag=dag_of(("a", [])))
+        asyncio.run(sched._send_cancel(ctx, ["ghost"]))
+        assert adapter.cancelled == []
+
+    def test_send_cancel_reaches_recorded_agent(self):
+        """有分配记录的任务：取消走分配时记录的 agent，不重新分配。"""
+        adapter = AsyncScriptedAdapter({})
+        sched, _ = make_scheduler(adapter)
+        ctx = _RunCtx(run_id="r1", dag=dag_of(("a", [])))
+        ctx.task_agent["a"] = "agent_001"
+        asyncio.run(sched._send_cancel(ctx, ["a"]))
+        assert adapter.cancelled == ["a"]

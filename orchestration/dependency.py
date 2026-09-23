@@ -41,12 +41,16 @@ class DependencyGraph:
     def __init__(self, dag: "DAG"):
         self._dag = dag
         self._tasks = dag.tasks
-        # 邻接表：children[上游] = 直接下游集合；孤岛任务也有空集条目
-        self._children: dict[str, set[str]] = {tid: set() for tid in self._tasks}
+        # 邻接表：children[上游] = 直接下游列表（**保持任务插入序**）；
+        # 孤岛任务也有空列表条目。用 list 而非 set——set 的迭代序受字符串
+        # hash 随机化影响，会让同层/并列节点顺序不可复现（拓扑序与并行前沿
+        # 都要求确定性）。
+        self._children: dict[str, list[str]] = {tid: [] for tid in self._tasks}
         for tid, t in self._tasks.items():
             for d in t.deps:
                 if d in self._children:  # 幽灵引用由 validate_edges() 另行报错
-                    self._children[d].add(tid)
+                    if tid not in self._children[d]:
+                        self._children[d].append(tid)
 
     # ---------- 基础结构 ----------
 
@@ -106,12 +110,20 @@ class DependencyGraph:
 
     # ---------- 拓扑 ----------
 
+    def _indegrees(self) -> dict[str, int]:
+        """入度 = 去重后的直接上游数（与邻接边集一致，重复声明 dep 不重复计数）。"""
+        indeg = {tid: 0 for tid in self._tasks}
+        for children in self._children.values():
+            for child in children:
+                indeg[child] += 1
+        return indeg
+
     def topological_order(self) -> list[str]:
         """Kahn 拓扑序；成环则抛 DependencyError。
 
         并列节点的顺序取 tasks 的插入序（确定性，便于测试与复现）。
         """
-        indeg = {tid: len(t.deps) for tid, t in self._tasks.items()}
+        indeg = self._indegrees()
         queue = [tid for tid in self._tasks if indeg[tid] == 0]
         order: list[str] = []
         while queue:
@@ -138,7 +150,7 @@ class DependencyGraph:
         层 0 = 根（无依赖）；层 k = 依赖全部落在前 k-1 层之内的任务。
         成环则抛 DependencyError。
         """
-        indeg = {tid: len(t.deps) for tid, t in self._tasks.items()}
+        indeg = self._indegrees()
         current = [tid for tid in self._tasks if indeg[tid] == 0]
         out: list[list[str]] = []
         seen = 0

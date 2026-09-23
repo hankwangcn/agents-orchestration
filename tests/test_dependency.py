@@ -116,6 +116,30 @@ class TestTopology:
         assert g.has_cycle() is True
 
 
+class TestDeterministicOrdering:
+    """回归：邻接表曾用 set——字符串 hash 随机化（PYTHONHASHSEED）使并列节点
+    顺序在进程间不可复现，拓扑序/并行前沿偶发翻转（曾在全量跑时间歇失败）。"""
+
+    def test_sibling_order_follows_task_insertion(self):
+        g = DependencyGraph(dag_of(*DIAMOND))
+        assert g.levels() == [["a"], ["b", "c"], ["d"]]
+        assert g.topological_order() == ["a", "b", "c", "d"]
+
+    def test_repeated_construction_is_stable(self):
+        """同一规格反复构造，顺序完全一致（不受 hash 随机化影响）。"""
+        orders = {
+            tuple(DependencyGraph(dag_of(*DIAMOND)).topological_order())
+            for _ in range(200)
+        }
+        assert orders == {("a", "b", "c", "d")}
+
+    def test_duplicate_dep_not_counted_twice(self):
+        """重复声明同一 dep 不重复计入度（否则节点永不入队，误报成环）。"""
+        g = DependencyGraph(dag_of(("a", []), ("b", ["a", "a"])))
+        assert g.topological_order() == ["a", "b"]
+        assert g.levels() == [["a"], ["b"]]
+
+
 class TestValidate:
     def test_valid_graph_passes(self):
         DependencyGraph(dag_of(*DIAMOND)).validate()  # 不抛异常
