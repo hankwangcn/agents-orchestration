@@ -140,7 +140,7 @@
 | task_id | string | ✅ | 任务 ID（`cancel` 时用于定位目标任务） |
 | task_desc | string | run 时 | 任务描述 |
 | inputs | object | run 时 | 任务输入，来自上游任务 output |
-| output_schema | object | run 时 | 期望输出结构（简化 Schema） |
+| output_schema | object | run 时 | 期望输出结构（**简化 Schema**，方言见 §7.2）；框架侧据它强校验 output |
 | constraints | object | 可选 | `timeout_seconds` / `budget_usd` / `side_effects` |
 
 ### 4.2 info_request
@@ -151,6 +151,8 @@
 | request_id | string | ✅ | 同上 |
 | scope | enum | ✅ | `capability`（能做什么）/ `resource`（可用模型、并发、配额）/ `constraint`（限制条件） |
 | questions | string[] | ✅ | 具体问题清单，逐条回答 |
+
+> 框架侧对 info_request 同样设 **wall-clock 上限**（与 task_request 的 `timeout` 对称）：采集卡死不能无封顶地拖住调用方（run 起始的池级刷新、派发前的决策点校验）。超时按**单点采集失败**处理——保留该 agent 上次已知画像，不中断其余 agent 的采集。
 
 ### 4.3 response（复用结果契约 Result）
 
@@ -251,9 +253,30 @@ agent → 框架：
 | 层 | 职责 | 手段 |
 |---|---|---|
 | 第一层：提取 | 从响应中取出 JSON 对象 | 容忍代码块包裹、前后杂文；提取后丢弃其余内容 |
-| 第二层：校验 | 验证结构完整合法 | JSON Schema 严格校验：必填字段、类型、枚举值、嵌套结构、`request_id` 与请求一致 |
+| 第二层：校验 | 验证结构完整合法 | ① 信封严格校验：必填字段、类型、枚举值、`request_id` 与请求一致；② **output_schema 强校验**（run 请求）：成功响应的 output 必须符合期望结构 |
 
 任何一层不过 → 走 §7.3 重试，不计入任务执行重试次数。
+
+**output_schema 方言（简化 Schema）**：以"字段 → 类型描述"的映射表达，而非完整 JSON Schema。
+
+```json
+{ "summary": "string", "top_trends": ["string"], "level": {"enum": ["low", "high"]} }
+```
+
+| spec 形态 | 含义 |
+|---|---|
+| `"string"` | 类型 token：`string` / `number` / `integer` / `boolean` / `object` / `array` / `null` / `any` |
+| `"string\|null"` | 并集（任一命中即可），常用于可空字段 |
+| `["string"]` | 数组，元素按唯一元素 spec 校验（可嵌套） |
+| `{"lang": "string"}` | 嵌套对象（字段映射递归） |
+| `{"enum": [...]}` | 枚举（取值必须落在列表内） |
+
+- 列出的字段为**必需**；**多余字段容忍**（agent 常附加上下文，不据此判失败）
+- 未知 spec 形态 / 未知类型 token → **保守不强制**（不因 schema 写法问题误判 agent）
+- schema 省略、简化版模板（§7.8）、info / cancel 请求 → 不做结构强校验
+- 完整 JSON Schema 节点（`{"type": "object", "properties": {...}}`）→ 整体跳过，结构一致性交由审计层（§7.5）
+
+> 此前 output_schema 仅作**提示**随请求下发，框架侧无强制，坏结构可静默通过——现补为第二层校验的一部分：不符即判失败，进入 §7.3。
 
 ### 7.3 解析失败重试（R1 第二道防线）
 
@@ -261,7 +284,7 @@ agent → 框架：
 响应校验失败 → 自动重试 1 次（携带修正提示）→ 仍失败 → 判定任务失败，进入失败传播（架构 §5）
 ```
 
-- 修正提示：**"上次输出不符合要求（原因），这是正确示例：…"**——附正确响应样例，不解释协议
+- 修正提示：**"上次输出不符合要求（原因），这是正确示例：…"**——附正确响应样例，不解释协议；若失败源于 output_schema 不符，提示中**一并给出期望结构**（§7.2），比只给通用示例更稳
 - 与任务执行重试（架构 §5.1）分离计数：解析重试只消耗框架侧资源，不消耗任务重试次数
 
 ### 7.4 few-shot 正/反示例（R1 根治）

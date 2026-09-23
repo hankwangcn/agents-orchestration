@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-08-15
-> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固 + 规划层接入 + 规划层切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语），319/319 测试全绿）
+> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固 + 规划层接入 + 规划层切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语）+ 执行层详细设计①②（output_schema 强校验 / info 采集超时），347/347 测试全绿）
 
 ---
 
@@ -94,12 +94,12 @@ flowchart TB
 | 模块 | 职责 | 关键输入 → 输出 |
 |---|---|---|
 | 任务拆解引擎 | LLM 将目标拆解为子任务 + 依赖 DAG；接入形态 = 网关 `POST /api/decompose` + CLI `ao decompose`（`--submit` 目标→DAG→提交一条链）；重试口径同协议 §7.3（失败原因 + 正确示例） | 目标 → `DAG{Task[]}` |
-| 资源统计器 | info_request 采集 agent 能力 / 资源 / 约束声明（阶段三；实现 = `agent_pool.AgentPool`）；注册记录口径 = **agent / 能力 / 限制（功能 + 性能）**——constraint → 功能限制（forbidden/languages）、resource → 性能限制（并发/限速/预算），合规限制归后期安全层；刷新策略 = **TTL 惰性刷新 + 决策点校验**——池级 `ensure_fresh()` 读时过期即刷，派发前 `validate_before_dispatch()` 对选中 agent 复核易变维度（resource/constraint） | agent 池 → `AgentProfile[]` |
+| 资源统计器 | info_request 采集 agent 能力 / 资源 / 约束声明（阶段三；实现 = `agent_pool.AgentPool`）；注册记录口径 = **agent / 能力 / 限制（功能 + 性能）**——constraint → 功能限制（forbidden/languages）、resource → 性能限制（并发/限速/预算），合规限制归后期安全层；刷新策略 = **TTL 惰性刷新 + 决策点校验**——池级 `ensure_fresh()` 读时过期即刷，派发前 `validate_before_dispatch()` 对选中 agent 复核易变维度（resource/constraint）；采集受**框架侧 wall-clock 上限**（`info_timeout_seconds`，与任务执行 #34 对称）约束 | agent 池 → `AgentProfile[]` |
 | 依赖分析 | 数据流依赖的独立结构视图（实现 = `dependency.DependencyGraph`）：引用合法性 / 无环 / 拓扑序 / **拓扑分层（并行前沿）** / 可达性与反向可达（剪枝判据）/ 交付点。**纯结构、不持有运行时状态**（status 归调度层）；DAG 保留同名方法作薄委托（调用点零改动） | `DAG` → `DependencyGraph` |
 | 资源协调器 | 三级分配（exact → capability → degraded，全程留痕）+ 多实例轮询 + 连续失败摘除（实现 = `allocator.Allocator`）；**只读画像不采集**——采数据是规划层资源统计器的职责 | `ResourcePlan` + agent 池 → `Allocation` |
 | DAG 调度器 | 按拓扑序派发任务，传递结果，管理取消 | `Allocation` + 结果流 → 派发/取消指令 |
 | 失败处理器 | 重试 → 失败传播 → 死任务剪枝 → 统一反馈 | 失败事件 → 剪枝集合 + 取消报告 |
-| Agent 适配器 | 对接任意 agent（DeepSeek / Claude / 自建，默认 OpenAI 兼容 HTTP 端点，见 §3.3）：装配协议提示词（模板 + 请求 JSON）+ 解析响应，实现取消契约与结果契约 | 任务 → 提示词请求 → `Result` |
+| Agent 适配器 | 对接任意 agent（DeepSeek / Claude / 自建，默认 OpenAI 兼容 HTTP 端点，见 §3.3）：装配协议提示词（模板 + 请求 JSON）+ 解析响应（双层校验含 **output_schema 强校验**），实现取消契约与结果契约 | 任务 → 提示词请求 → `Result` |
 | 结果审计器 | 校验正确性、核算成本、标记异常 | `Result[]` → `AuditReport` |
 | 自我学习 | 复盘失败与低效拆解，沉淀规则优化拆解策略 | `AuditReport` / 剪枝报告 → 规则 |
 
@@ -138,6 +138,7 @@ flowchart TB
   "parent_id": null,
   "deps": ["task_000"],
   "desc": "拆解后的子任务描述",
+  "output_schema": {"summary": "string", "top_trends": ["string"]},
   "required_resources": {"model": "deepseek-chat", "budget": 1.2, "timeout": 300},
   "required_capabilities": ["代码审查", "数据分析"],
   "status": "pending | running | success | failed | cancelled | skipped",
@@ -146,6 +147,7 @@ flowchart TB
 ```
 
 > `required_resources.timeout`：**框架侧强制**的 wall-clock 上限（单次尝试，秒）——超时即中断并判失败（`error.code=timeout`），汇入重试/剪枝；同时随 `constraints` 声明给 agent 作建议值。`<=0` 表示不设超时；重试各自计时，故单任务最长占用 ≈ `timeout × (retries+1) + 退避`。
+> `output_schema`：期望输出结构（**简化 Schema** 方言，见协议 §7.2）——框架侧对成功响应的 `output` **强制**校验（缺字段 / 类型错即判失败，汇入解析重试与失败传播）；未声明则不校验。
 > `required_capabilities`：任务的能力需求标签（拆解层声明，阶段三起按能力匹配 agent，见 `AgentRegistry`）；为空时只按 `required_resources.model` 匹配。
 
 ### 4.2 结果契约 Result（框架一切逻辑的枢纽）
@@ -315,6 +317,8 @@ flowchart LR
 
 - [x] **调度层详细设计①：取消下发统一原语 + 死参清理**（2026-09-23 完成）— ①**取消下发收拢为统一原语**（`scheduler_async._send_cancel(ctx, tids)`、`scheduler._send_cancel(tids)`）：原取消下发在三处各写一份结构重复的循环——内部剪枝 `_dispatch_cancels`、外部整棵取消 `_cancel_all`（异步）、`Scheduler._dispatch_cancels`（同步）——且**行为不一致**：异步剪枝路径失败记 `cancel_failed`，`_cancel_all` 用 `except: pass` 静默吞掉，同步路径无兜底。现两路共用一个原语，best-effort 语义不变（agent 是否履约都不阻塞收尾，晚到结果由状态机丢弃），**统一保留 `cancel_failed` 可观测**（不再静默）；同步 `_send_cancel` 保留为契约预留（同步模型逐任务串行，剪枝时不存在 RUNNING 任务，与异步口径对齐）。回归：`tests/test_scheduler_async.py::TestUnifiedCancelPrimitive` 四项（剪枝路径/整棵取消路径取消失败均记 `cancel_failed`、无分配记录跳过、有记录时取消走分配时记录的 agent）。②**删除同步调度器死参 `backoff_base`**（`scheduler.py`）：构造参数存了不用（同步器无重试退避）——属"声明了但无人消费"死字段的又一处；并发特性（退避/限流/竞态）是异步专属，不反向收敛（同步顺序执行时 Semaphore 恒为 no-op，补齐无收益）。回归：`tests/test_scheduler.py::TestNoDeadBackoffParam` 两项。③**顺带修复依赖分析确定性缺陷**（`dependency.py`，本次全量跑时间歇失败暴露）：邻接表用 `set`——字符串 hash 随机化（`PYTHONHASHSEED`）使并列节点顺序在进程间不可复现，`topological_order()` / `levels()` 偶发翻转（实测 3 次跑 2 次失败），与 §8「并列节点按插入序，确定性」声明相悖；现改为**插入序 list** 邻接表，并以 `_indegrees()` 从边集算入度（重复声明同一 `dep` 不再重复计入度——原实现会致节点永不入队、误报成环）。回归：`tests/test_dependency.py::TestDeterministicOrdering` 三项（并列序跟随插入序、200 次构造顺序恒定、重复 dep 不重复计数）。测试 319/319 全绿（`PYTHONHASHSEED` 0–4 复跑恒定），见 §10
 
+- [x] **执行层详细设计①②：output_schema 框架侧强校验 + info 采集框架侧超时**（2026-09-23 完成）— ①**output_schema 强校验**（`validation.py` / `adapters/base.py`）：`output_schema` 此前仅作**提示**随请求下发（`build_task_request`），框架侧无强制——成功响应的 output 结构可静默偏离期望（"坏结构静默通过"）。现补为双层校验第二层的一部分（协议 §7.2）：`validate_output_schema` 按**简化 Schema 方言**（字段 → 类型描述的映射：类型 token `string/number/integer/boolean/object/array/null/any`、并集 `"a\|b"`、数组 `[spec]`（元素可嵌套）、嵌套对象、`{"enum": [...]}`）强校验，列出字段**必需**、多余字段**容忍**、未知 spec 形态与未知类型 token **保守不强制**（不因 schema 写法误判 agent）、完整 JSON-Schema 节点整体跳过（结构一致性仍交审计 §7.5）；不符 → `ResponseValidationError`，走 §7.3 修正重试（修正提示**一并给出期望结构**，此前只有通用示例），仍失败 → 任务失败汇入既有重试/剪枝。`parse_result` / `aparse_result` / `validate_result` 增 `output_schema` 透传；`run_task` / `arun_task` 传入 `task.output_schema`；简化版模板（§7.8）、info / cancel 请求、失败响应不做此校验。②**info 采集超时**（`agent_pool.py` / `registry.py` / 新增 `timeouts.py`）：info_request 采集原无框架侧 wall-clock 上限，与任务执行（#34）不对称——采集卡死会无封顶地拖住调用方（run 起始的池级刷新、派发前的决策点校验）。现 `AgentPool` 新增 `info_timeout_seconds`（默认 30s，`<=0` 关闭；`AgentRegistry` 透传 + 属性）：同步 `_collect_one` 走共享 wall-clock 原语（daemon 线程 join，不阻塞解释器退出），异步 `_acollect_one` 走 `asyncio.wait_for`；超时按**单点采集失败**处理（返回 `ok=False` + 明确错误，保留该 agent 上次已知画像，不中断其余 agent）。顺带把 `scheduler._call_with_timeout` 抽为共享模块 `orchestration/timeouts.py::call_with_timeout`（执行层/规划层共用一份，避免重复）。回归：`tests/test_validation.py::TestOutputSchema` 18 项（缺省跳过 / 结构匹配 / 缺字段 / 类型错 / 数组元素类型 / 多余字段容忍 / output 非对象 / 可空并集 / 嵌套对象 / 枚举 / number 拒 bool / 未知 token 不强制 / JSON-Schema 节点跳过 / 简化版跳过 / info 跳过 / 失败响应跳过 / 修正提示携带 schema / 重试仍失败）+ `tests/test_inprocess.py` 4 项（接线实证：同步强校验生效、结构匹配通过、异步强校验生效、未声明不校验）+ `tests/test_registry.py::TestInfoTimeout` 6 项（同步采集封顶 / 池级刷新封顶 / 异步决策点封顶 / 超时保留上次画像 / 关闭超时 / 默认值与透传）。测试 347/347 全绿，见 §10
+
 ---
 
 ## 9. 待定项（实现前需拍板）
@@ -358,7 +362,8 @@ agentsOrchestration/
 │   ├── agent_pool.py        # 资源统计器（规划层）：注册 / info_request 采集 / 声明解析 / TTL+决策点刷新
 │   ├── allocator.py         # 资源协调器（调度层）：三级分配 / 多实例轮询 / 连续失败摘除
 │   ├── protocol.py          # PROTOCOL_PROMPT 模板（完整/简化版）+ 请求构造 + 渲染
-│   ├── validation.py        # 双层校验：提取 → Schema 校验 → 解析重试（同步/异步）
+│   ├── validation.py        # 双层校验：提取 → Schema 校验（含 output_schema 强校验）→ 解析重试（同步/异步）
+│   ├── timeouts.py          # 框架侧 wall-clock 超时原语（任务执行 #34 / info 采集共用）
 │   ├── decomposer.py        # 任务拆解：LLM 生成 DAG + 拆解 Schema 校验
 │   ├── registry.py          # Agent 注册表门面：组合 AgentPool（规划层）+ Allocator（调度层），零逻辑转发
 │   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘，§5.5）

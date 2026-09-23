@@ -13,6 +13,7 @@ from orchestration.adapters.inprocess import InProcessAdapter
 from orchestration.models import DAG, Task
 from orchestration.registry import AgentRegistry
 from orchestration.scheduler_async import AsyncScheduler
+from orchestration.validation import ResponseValidationError
 
 
 def extract_request(messages: list[dict]) -> dict:
@@ -163,3 +164,49 @@ def test_async_scheduler_full_flow_inprocess():
     assert report.results["t1"].output == {"done": "local-a"}
     assert report.results["t2"].output == {"done": "local-b"}
     assert report.total_cost == 0.0
+
+
+# ---------------------------------------------------------------------------
+# output_schema 框架侧强校验：接线实证（执行层详细设计缺口 a）
+# ---------------------------------------------------------------------------
+
+def _schema_agent(payload):
+    """返回固定 output 的进程内 agent（payload 决定结构对/错）。"""
+    def agent(messages):
+        req = extract_request(messages)
+        return {"request_id": req["request_id"], "task_id": req["task_id"],
+                "success": True, "output": payload}
+
+    return InProcessAdapter(agent, model="local-agent")
+
+
+def test_output_schema_enforced_sync():
+    """结构不符 → 框架侧判失败（解析重试后仍不符即抛错），不再静默通过。"""
+    adapter = _schema_agent({"summary": 123})  # 应为 string
+    task = Task(id="t1", desc="x", output_schema={"summary": "string"})
+    with pytest.raises(ResponseValidationError):
+        adapter.run_task(task, request_id="req-1")
+
+
+def test_output_schema_passed_sync():
+    adapter = _schema_agent({"summary": "ok", "extra": 1})  # 多余字段容忍
+    task = Task(id="t1", desc="x", output_schema={"summary": "string"})
+    result = adapter.run_task(task, request_id="req-1")
+    assert result.success and result.output["summary"] == "ok"
+
+
+def test_output_schema_enforced_async():
+    async def _go():
+        adapter = _schema_agent({"summary": 123})
+        task = Task(id="t1", desc="x", output_schema={"summary": "string"})
+        with pytest.raises(ResponseValidationError):
+            await adapter.arun_task(task, request_id="req-1")
+
+    __import__("asyncio").run(_go())
+
+
+def test_no_output_schema_not_enforced():
+    """未声明 output_schema → 不做结构校验（既有行为不变）。"""
+    adapter = _schema_agent({"anything": [1, 2, 3]})
+    result = adapter.run_task(Task(id="t1", desc="x"), request_id="req-1")
+    assert result.success

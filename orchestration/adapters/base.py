@@ -103,6 +103,7 @@ class AgentAdapter(ABC):
             template_mode=self.template_mode,
             response_kind="run",
             retry_fn=retry,
+            output_schema=task.output_schema,
         ))
 
     def run_info(
@@ -190,6 +191,7 @@ class AgentAdapter(ABC):
             template_mode=self.template_mode,
             response_kind="run",
             aretry_fn=retry,
+            output_schema=task.output_schema,
         ))
 
     async def arun_info(

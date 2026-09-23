@@ -7,6 +7,8 @@
 - 刷新策略 = **TTL 惰性刷新 + 决策点校验**：池级 `ensure_fresh()` 读时过期
   即刷（仅对过期 agent 重采，新鲜零开销）；决策点 `validate_before_dispatch()`
   在派发前对选中 agent 复核易变维度（resource/constraint）
+- 采集受**框架侧 wall-clock 上限**约束（`info_timeout_seconds`，与任务执行 #34
+  对称）：采集卡死不能无封顶地拖住调用方，超时按单点失败处理、保留上次画像
 
 **层职责边界**：本模块只做"把池的画像弄准、给出去"（注册 / 采集 / 声明解析
 / 刷新 / 画像查询）。**任务分配与故障摘除不在此**——那是调度层「资源协调器」
@@ -14,6 +16,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from dataclasses import dataclass, field
@@ -21,6 +24,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .adapters.base import AgentAdapter
+from .timeouts import call_with_timeout
 
 # ---------------------------------------------------------------------------
 # 采集问题集（协议 §4.2：info_request 的 questions）
@@ -133,11 +137,16 @@ class AgentPool:
         self,
         collect_ttl_seconds: float = 300.0,
         validate_on_dispatch: bool = True,
+        info_timeout_seconds: float = 30.0,
     ):
         self._agents: dict[str, RegisteredAgent] = {}
         self._default_id: Optional[str] = None
         self.collect_ttl_seconds = collect_ttl_seconds
         self.validate_on_dispatch = validate_on_dispatch
+        # 框架侧 wall-clock 上限（与任务执行 #34 对称）：采集同样会卡死，
+        # 不能无封顶地拖住调用方（run 起始的池级刷新 / 派发前的决策点校验）。
+        # <=0 表示不设超时。
+        self.info_timeout_seconds = info_timeout_seconds
 
     # ---------- 注册 ----------
 
@@ -191,14 +200,26 @@ class AgentPool:
         return summary
 
     def _collect_one(self, agent: RegisteredAgent, scope: str) -> dict:
-        """对单个 agent 发一次 info_request 并解析入库。"""
+        """对单个 agent 发一次 info_request 并解析入库。
+
+        采集受框架侧 wall-clock 上限约束（info_timeout_seconds）——与任务执行
+        #34 对称：采集卡死同样不能无封顶地拖住调用方；超时按单点失败处理。
+        """
         request_id = f"info:{agent.agent_id}:{scope}:{_ts()}"
-        try:
-            result = agent.adapter.run_info(
+        timeout = self.info_timeout_seconds
+
+        def _call():
+            return agent.adapter.run_info(
                 scope=scope,
                 questions=INFO_QUESTIONS[scope],
                 request_id=request_id,
             )
+
+        try:
+            if timeout and timeout > 0:
+                result = call_with_timeout(_call, timeout)
+            else:
+                result = _call()
             if not result.success:
                 raise RegistryError(
                     result.error.code if result.error else "info 请求失败"
@@ -210,6 +231,13 @@ class AgentPool:
                 "scope": scope,
                 "ok": True,
                 "output": result.output,
+            }
+        except TimeoutError:
+            return {
+                "agent_id": agent.agent_id,
+                "scope": scope,
+                "ok": False,
+                "error": f"info 采集超时（>{timeout}s，框架侧 wall-clock）",
             }
         except Exception as e:  # 适配器异常 / 解析失败 → 单点失败不中断
             return {
@@ -220,14 +248,22 @@ class AgentPool:
             }
 
     async def _acollect_one(self, agent: RegisteredAgent, scope: str) -> dict:
-        """异步版单 agent 采集（AsyncScheduler 决策点校验用，不阻塞事件循环）。"""
+        """异步版单 agent 采集（AsyncScheduler 决策点校验用，不阻塞事件循环）。
+
+        同样受框架侧 wall-clock 上限约束（asyncio.wait_for）。
+        """
         request_id = f"info:{agent.agent_id}:{scope}:{_ts()}"
+        timeout = self.info_timeout_seconds
         try:
-            result = await agent.adapter.arun_info(
+            call = agent.adapter.arun_info(
                 scope=scope,
                 questions=INFO_QUESTIONS[scope],
                 request_id=request_id,
             )
+            if timeout and timeout > 0:
+                result = await asyncio.wait_for(call, timeout=timeout)
+            else:
+                result = await call
             if not result.success:
                 raise RegistryError(
                     result.error.code if result.error else "info 请求失败"
@@ -239,6 +275,13 @@ class AgentPool:
                 "scope": scope,
                 "ok": True,
                 "output": result.output,
+            }
+        except (asyncio.TimeoutError, TimeoutError):
+            return {
+                "agent_id": agent.agent_id,
+                "scope": scope,
+                "ok": False,
+                "error": f"info 采集超时（>{timeout}s，框架侧 wall-clock）",
             }
         except Exception as e:  # 单点失败隔离：保留上次已知值，不中断整体
             return {

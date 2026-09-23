@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/hankwangcn/agents-orchestration/blob/main/LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-319%2F319%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
+[![Tests](https://img.shields.io/badge/tests-347%2F347%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不监控 agent 内部状态。**
 
@@ -374,7 +374,8 @@ agents-orchestration/
 │   ├── agent_pool.py        # 资源统计器（规划层）：注册 / info_request 采集 / 声明解析 / TTL 刷新
 │   ├── allocator.py         # 资源协调器（调度层）：三级分配 / 多实例轮询 / 连续失败摘除
 │   ├── protocol.py          # 消息协议模板（完整/简化版）+ 请求构造 + 渲染
-│   ├── validation.py        # 解析组件：双层校验（提取 → Schema 校验 → 重试）
+│   ├── validation.py        # 解析组件：双层校验（提取 → 信封 Schema + output_schema 强校验 → 重试）
+│   ├── timeouts.py          # 框架侧 wall-clock 超时原语（任务执行 / info 采集共用）
 │   ├── decomposer.py        # 任务拆解：目标 → 依赖 DAG（含能力需求声明）
 │   ├── registry.py          # Agent 注册表门面：组合规划层 AgentPool + 调度层 Allocator（零逻辑转发）
 │   ├── scheduler.py         # 同步调度器：拓扑派发 + 失败传播 + 剪枝
@@ -389,13 +390,12 @@ agents-orchestration/
 │   └── adapters/            # Agent 适配器：base（协议装配/双层校验/重试/成本回填）
 │                            #   + deepseek（OpenAI 兼容 HTTP）+ inprocess（免 HTTP）
 ├── scripts/
-│   ├── mock_agents.py        # 本地 OpenAI 兼容 mock agent 服务（多角色 + 故障注入）
-│   ├── mock_agents.py        # 本地 OpenAI 兼容 mock agent 服务（确定性故障注入）
+│   ├── mock_agents.py        # 本地 OpenAI 兼容 mock agent 服务（多角色 + 确定性故障注入）
 │   ├── smoke_multiagent.py   # 多 agent 全流程冒烟（真实 HTTP，无需 key）
 │   ├── smoke_deepseek.py     # 真实模型端到端冒烟（需 $DEEPSEEK_API_KEY）
 │   ├── smoke_decompose.py    # 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 319 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
+├── tests/                   # 347 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告
 └── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
@@ -406,10 +406,10 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 319/319 全绿
+pytest        # 347/347 全绿
 ```
 
-测试覆盖重点：依赖分析（拓扑分层/并行前沿/可达性/成环与引用校验，23 项）、层职责切分（规划层 `AgentPool` × 调度层 `Allocator`）、解析组件（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）。
+测试覆盖重点：依赖分析（拓扑分层/并行前沿/可达性/成环与引用校验，23 项）、层职责切分（规划层 `AgentPool` × 调度层 `Allocator`）、解析组件（最严格模块，47 项：信封校验 + output_schema 强校验 + 重试兜底）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）、采集侧 wall-clock 超时。
 
 ---
 

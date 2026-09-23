@@ -167,6 +167,149 @@ class TestSimpleMode:
 
 
 # ---------------------------------------------------------------------------
+# output_schema 框架侧强校验（协议 §7.2；执行层详细设计缺口 a）
+# ---------------------------------------------------------------------------
+
+SCHEMA = {"summary": "string", "top_trends": ["string"]}
+
+
+def _run_obj(output):
+    return {"request_id": "r", "task_id": "t1", "success": True, "output": output}
+
+
+class TestOutputSchema:
+    """output 结构不再只作提示：框架侧按 output_schema 强制校验。"""
+
+    def test_absent_schema_skips(self):
+        r = validate_result(_run_obj({"anything": 1}), request_id="r", task_id="t1")
+        assert r.success
+
+    def test_matching_structure_passes(self):
+        r = validate_result(
+            _run_obj({"summary": "ok", "top_trends": ["a", "b"]}),
+            request_id="r", task_id="t1", output_schema=SCHEMA,
+        )
+        assert r.success
+
+    def test_missing_required_field(self):
+        with pytest.raises(ResponseValidationError, match="summary"):
+            validate_result(_run_obj({"top_trends": []}),
+                            request_id="r", task_id="t1", output_schema=SCHEMA)
+
+    def test_wrong_type(self):
+        with pytest.raises(ResponseValidationError, match="类型不符"):
+            validate_result(_run_obj({"summary": 3, "top_trends": []}),
+                            request_id="r", task_id="t1", output_schema=SCHEMA)
+
+    def test_array_item_type(self):
+        with pytest.raises(ResponseValidationError, match=r"top_trends\[0\]"):
+            validate_result(_run_obj({"summary": "x", "top_trends": [1]}),
+                            request_id="r", task_id="t1", output_schema=SCHEMA)
+
+    def test_extra_fields_tolerated(self):
+        r = validate_result(
+            _run_obj({"summary": "x", "top_trends": [], "extra": 1}),
+            request_id="r", task_id="t1", output_schema=SCHEMA,
+        )
+        assert r.success
+
+    def test_output_not_object(self):
+        with pytest.raises(ResponseValidationError, match="期望 object"):
+            validate_result(_run_obj([1, 2]), request_id="r", task_id="t1",
+                            output_schema=SCHEMA)
+
+    def test_nullable_union(self):
+        schema = {"note": "string|null"}
+        assert validate_result(_run_obj({"note": None}), request_id="r",
+                               task_id="t1", output_schema=schema).success
+        with pytest.raises(ResponseValidationError, match="类型不符"):
+            validate_result(_run_obj({"note": 5}), request_id="r",
+                            task_id="t1", output_schema=schema)
+
+    def test_nested_object(self):
+        schema = {"meta": {"lang": "string"}}
+        assert validate_result(_run_obj({"meta": {"lang": "en"}}), request_id="r",
+                               task_id="t1", output_schema=schema).success
+        with pytest.raises(ResponseValidationError, match="meta.lang"):
+            validate_result(_run_obj({"meta": {}}), request_id="r",
+                            task_id="t1", output_schema=schema)
+
+    def test_enum(self):
+        schema = {"level": {"enum": ["low", "high"]}}
+        assert validate_result(_run_obj({"level": "low"}), request_id="r",
+                               task_id="t1", output_schema=schema).success
+        with pytest.raises(ResponseValidationError, match="枚举"):
+            validate_result(_run_obj({"level": "mid"}), request_id="r",
+                            task_id="t1", output_schema=schema)
+
+    def test_number_rejects_bool(self):
+        with pytest.raises(ResponseValidationError, match="类型不符"):
+            validate_result(_run_obj({"n": True}), request_id="r",
+                            task_id="t1", output_schema={"n": "number"})
+
+    def test_unknown_type_token_not_enforced(self):
+        """未知类型 token → 保守不强制（不因 schema 写法问题误判 agent）。"""
+        r = validate_result(_run_obj({"x": 123}), request_id="r",
+                            task_id="t1", output_schema={"x": "sometype"})
+        assert r.success
+
+    def test_full_json_schema_node_skipped(self):
+        """误传完整 JSON Schema（节点形态）→ 整体跳过。"""
+        r = validate_result(
+            _run_obj({"whatever": 1}), request_id="r", task_id="t1",
+            output_schema={"type": "object",
+                           "properties": {"a": {"type": "string"}}},
+        )
+        assert r.success
+
+    def test_simple_template_skips_schema(self):
+        """简化版模板只求最小可用 JSON（§7.8）→ 不做结构强校验。"""
+        obj = {"success": True, "output": {"wrong": 1}}
+        r = validate_result(obj, template_mode="simple", request_id="r",
+                            task_id="t1", output_schema=SCHEMA)
+        assert r.success
+
+    def test_info_kind_skips_schema(self):
+        obj = {"request_id": "r", "task_id": "", "success": True,
+               "output": {"q1": "x"}}
+        r = validate_result(obj, request_id="r", response_kind="info",
+                            output_schema=SCHEMA)
+        assert r.success
+
+    def test_failure_response_skips_schema(self):
+        """失败响应没有 output，不该被结构校验二次打击。"""
+        obj = {"request_id": "r", "task_id": "t1", "success": False,
+               "error": {"code": "model_error", "message": "x"}}
+        r = validate_result(obj, request_id="r", task_id="t1",
+                            output_schema=SCHEMA)
+        assert not r.success
+
+    def test_retry_correction_carries_schema(self):
+        """schema 不符 → 修正提示附上期望结构（§7.3 给示例比给指令稳）。"""
+        good = json.dumps(_run_obj({"summary": "ok", "top_trends": []}))
+        corrections = []
+
+        def retry_fn(correction: str) -> str:
+            corrections.append(correction)
+            return good
+
+        r = parse_result(
+            json.dumps(_run_obj({"summary": 1, "top_trends": []})),
+            request_id="r", task_id="t1", retry_fn=retry_fn,
+            output_schema=SCHEMA,
+        )
+        assert r.success
+        assert "output_schema" in corrections[0]
+        assert "top_trends" in corrections[0]
+
+    def test_retry_still_bad_fails(self):
+        bad = json.dumps(_run_obj({"summary": 1, "top_trends": []}))
+        with pytest.raises(ResponseValidationError):
+            parse_result(bad, request_id="r", task_id="t1",
+                         retry_fn=lambda c: bad, output_schema=SCHEMA)
+
+
+# ---------------------------------------------------------------------------
 # 解析重试（§7.3）
 # ---------------------------------------------------------------------------
 

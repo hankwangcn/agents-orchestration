@@ -58,10 +58,12 @@ class AgentRegistry:
         max_consecutive_failures: int = 3,
         collect_ttl_seconds: float = 300.0,
         validate_on_dispatch: bool = True,
+        info_timeout_seconds: float = 30.0,
     ):
         self._pool = AgentPool(
             collect_ttl_seconds=collect_ttl_seconds,
             validate_on_dispatch=validate_on_dispatch,
+            info_timeout_seconds=info_timeout_seconds,
         )
         self._allocator = Allocator(
             self._pool, max_consecutive_failures=max_consecutive_failures
@@ -102,6 +104,14 @@ class AgentRegistry:
     @validate_on_dispatch.setter
     def validate_on_dispatch(self, value: bool) -> None:
         self._pool.validate_on_dispatch = value
+
+    @property
+    def info_timeout_seconds(self) -> float:
+        return self._pool.info_timeout_seconds
+
+    @info_timeout_seconds.setter
+    def info_timeout_seconds(self, value: float) -> None:
+        self._pool.info_timeout_seconds = value
 
     @property
     def _agents(self) -> dict[str, RegisteredAgent]:

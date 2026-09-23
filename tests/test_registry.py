@@ -8,6 +8,7 @@
 from typing import Optional
 
 import asyncio
+import time
 
 import pytest
 
@@ -665,3 +666,97 @@ class TestLayerSplit:
         assert Assignment is not None
         assert RegisteredAgent is not None
         assert VOLATILE_SCOPES == ("resource", "constraint")
+
+
+# ---------------------------------------------------------------------------
+# info 采集框架侧超时（执行层详细设计缺口 b；与任务执行 #34 对称）
+# ---------------------------------------------------------------------------
+
+class SlowInfoAdapter(InfoAdapter):
+    """run_info 卡死（sleep）——验证采集受框架侧 wall-clock 上限约束。"""
+
+    def __init__(self, delay: float = 0.5, **kw):
+        super().__init__(**kw)
+        self.delay = delay
+
+    def run_info(self, scope, questions, request_id):
+        self.info_calls.append((scope, request_id, questions))
+        time.sleep(self.delay)
+        return Result(task_id="", success=True, output={})
+
+
+class SlowAsyncInfoAdapter(SlowInfoAdapter):
+    async def arun_info(self, scope, questions, request_id):
+        self.info_calls.append((scope, request_id, questions))
+        await asyncio.sleep(self.delay)
+        return Result(task_id="", success=True, output={})
+
+
+class ToggleInfoAdapter(InfoAdapter):
+    """先正常应答；置 slow=True 后卡死——验证超时保留上次已知画像。"""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.slow = False
+
+    def run_info(self, scope, questions, request_id):
+        if self.slow:
+            time.sleep(0.5)
+            return Result(task_id="", success=True, output={})
+        return super().run_info(scope, questions, request_id)
+
+
+class TestInfoTimeout:
+    def test_sync_collect_bounded(self):
+        """采集卡死 → 到点即返（不再无封顶拖住调用方）。"""
+        reg = AgentRegistry(info_timeout_seconds=0.05)
+        reg.register(SlowInfoAdapter(delay=0.5, declarations=DECL), agent_id="slow")
+        t0 = time.monotonic()
+        summary = reg.collect()
+        assert time.monotonic() - t0 < 0.4
+        assert len(summary) == 3
+        assert all(not s["ok"] for s in summary)
+        assert all("超时" in s["error"] for s in summary)
+
+    def test_ensure_fresh_bounded(self):
+        reg = AgentRegistry(info_timeout_seconds=0.05)
+        reg.register(SlowInfoAdapter(delay=0.5, declarations=DECL), agent_id="slow")
+        t0 = time.monotonic()
+        summary = reg.ensure_fresh()
+        assert time.monotonic() - t0 < 0.4
+        assert len(summary) == 3 and all(not s["ok"] for s in summary)
+
+    def test_async_collect_bounded(self):
+        reg = AgentRegistry(info_timeout_seconds=0.05)
+        aid = reg.register(
+            SlowAsyncInfoAdapter(delay=0.5, declarations=DECL), agent_id="slow"
+        )
+        summary = asyncio.run(reg.avalidate_before_dispatch(aid))
+        assert {s["scope"] for s in summary} == {"resource", "constraint"}
+        assert all(not s["ok"] and "超时" in s["error"] for s in summary)
+
+    def test_sync_timeout_keeps_last_known(self):
+        """超时按单点失败处理：保留上次已知画像，不阻塞派发。"""
+        reg = AgentRegistry(info_timeout_seconds=0.05)
+        adapter = ToggleInfoAdapter(declarations=DECL)
+        aid = reg.register(adapter, agent_id="a")
+        reg.collect("a")
+        assert reg.get(aid).max_concurrency == 5
+        adapter.slow = True
+        summary = reg.collect("a")
+        assert all(not s["ok"] for s in summary)
+        assert reg.get(aid).max_concurrency == 5  # 上次画像保留
+
+    def test_timeout_disabled(self):
+        """info_timeout_seconds<=0 → 不设超时（既有行为不变）。"""
+        reg = AgentRegistry(info_timeout_seconds=0)
+        reg.register(InfoAdapter(declarations=DECL), agent_id="a")
+        summary = reg.collect()
+        assert all(s["ok"] for s in summary)
+        assert reg.get("a").max_concurrency == 5
+
+    def test_default_timeout_and_propagation(self):
+        reg = AgentRegistry()
+        assert reg.info_timeout_seconds == 30.0
+        reg.info_timeout_seconds = 5.0
+        assert reg.pool.info_timeout_seconds == 5.0

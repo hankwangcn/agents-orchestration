@@ -11,9 +11,9 @@
 """
 from __future__ import annotations
 
-import threading
 from typing import Iterable
 
+from .timeouts import call_with_timeout
 from .models import (
     DAG,
     ErrorInfo,
@@ -119,7 +119,7 @@ class Scheduler:
             try:
                 if timeout and timeout > 0:
                     # 框架侧 wall-clock 超时（与 AsyncScheduler 同口径）
-                    result = _call_with_timeout(
+                    result = call_with_timeout(
                         lambda: adapter.run_task(
                             task, request_id=request_id, inputs=inputs
                         ),
@@ -207,28 +207,3 @@ class Scheduler:
             dag.tasks[f].status == TaskStatus.SUCCESS for f in finals
         )
         return "partial" if any_final_success else "failed"
-
-
-def _call_with_timeout(fn, timeout_seconds: float):
-    """框架侧 wall-clock 封顶：调用超过 timeout_seconds 未返回则抛 TimeoutError。
-
-    用 daemon 线程执行——超时后调用方立即返回（不阻塞解释器退出），挂死的
-    调用不再被等待。这正是"给槽占用封顶"的目的：调度资源随超时释放，agent
-    侧即便不中断也不再拖住整个 run。
-    """
-    box: dict = {}
-
-    def _target() -> None:
-        try:
-            box["result"] = fn()
-        except BaseException as e:  # 原样回抛给调用方（含适配器自身异常）
-            box["error"] = e
-
-    th = threading.Thread(target=_target, daemon=True)
-    th.start()
-    th.join(timeout_seconds)
-    if th.is_alive():
-        raise TimeoutError(f"调用超过 {timeout_seconds}s 未返回")
-    if "error" in box:
-        raise box["error"]
-    return box["result"]
