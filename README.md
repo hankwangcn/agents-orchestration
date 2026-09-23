@@ -1,9 +1,9 @@
 <div align="center">
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/hankwangcn/agents-orchestration/blob/main/LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-310%2F310%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-310%2F310%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不监控 agent 内部状态。**
 
@@ -35,7 +35,7 @@
 
 ## 架构概览
 
-六层架构（详见 [架构文档](docs/architecture.md) 与 [架构总览图](docs/architecture-diagram.html)）：
+六层架构（详见 [架构文档](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/architecture.md) 与 [架构总览图](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/architecture-diagram.html)）：
 
 ```
 接入层 → 规划层 → 调度层 → 执行层 → 治理层 → 学习层
@@ -294,7 +294,7 @@ export DEEPSEEK_API_KEY=sk-...
 - 4 个角色 agent（translator / coder / analyst / flaky）+ 11 任务 DAG
 - 覆盖：三级分配留痕（exact / capability / degraded）、能力不覆盖 risk 标记、解析层杂文兜底重试、任务重试耗尽 → 连续失败摘除 → 降级回退、反向可达剪枝（独立交付分支不误杀）、per-agent 并发上限真实生效（HTTP 并发峰值 ≤ 声明值）、usage 真实回填、审计 / 成本 / 学习
 - mock 支持确定性故障注入（HTTP 500 / 杂文 / 业务失败），独立运行：`.venv/bin/python scripts/mock_agents.py`
-- 可视化报告（DAG 执行全景图 / 三级分配留痕 / 失败传播 / 治理三栏）：`.venv/bin/python scripts/smoke_multiagent.py --visual`，示例报告见 [docs/demo/smoke_multiagent_report.html](docs/demo/smoke_multiagent_report.html)
+- 可视化报告（DAG 执行全景图 / 三级分配留痕 / 失败传播 / 治理三栏）：`.venv/bin/python scripts/smoke_multiagent.py --visual`，示例报告见 [docs/demo/smoke_multiagent_report.html](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/demo/smoke_multiagent_report.html)
 
 ### 7. 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
 
@@ -358,9 +358,9 @@ registry = AgentRegistry.from_config(cfg, adapter_factory=lambda e: InProcessAda
 
 ## 设计文档
 
-- [架构文档](docs/architecture.md) — 分层架构、失败处理（剪枝 / 竞态）、数据模型
-- [消息沟通协议](docs/messaging-protocol.md) — 协议模板、稳定性兜底（§7）
-- [架构总览图（HTML）](docs/architecture-diagram.html)
+- [架构文档](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/architecture.md) — 分层架构、失败处理（剪枝 / 竞态）、数据模型
+- [消息沟通协议](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/messaging-protocol.md) — 协议模板、稳定性兜底（§7）
+- [架构总览图（HTML）](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/architecture-diagram.html)
 
 ---
 
@@ -415,4 +415,4 @@ pytest        # 310/310 全绿
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](https://github.com/hankwangcn/agents-orchestration/blob/main/LICENSE).
