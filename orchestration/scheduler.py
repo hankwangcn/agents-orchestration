@@ -5,10 +5,13 @@
 - 失败处理：自动重试 N 次 → 耗尽后 prune_after_failure（反向可达剪枝）
   → 对剪枝时仍在运行的任务下发取消（best-effort，架构 §5.3）
 - 竞态（§5.3）：剪枝后重新计算可派发集合，天然冻结被剪任务的派发
+- 框架侧 wall-clock 超时：单次执行超过 required_resources.timeout 即判
+  失败（agent 挂死不再永久占住调度资源），产出 Result 汇入既有重试/
+  剪枝链路
 """
 from __future__ import annotations
 
-
+import threading
 
 from .models import (
     DAG,
@@ -113,8 +116,30 @@ class Scheduler:
         last: Result | None = None
         for attempt in range(self.retries + 1):
             request_id = f"{task.id}:run:{attempt}"
+            timeout = task.required_resources.timeout
             try:
-                result = adapter.run_task(task, request_id=request_id, inputs=inputs)
+                if timeout and timeout > 0:
+                    # 框架侧 wall-clock 超时（与 AsyncScheduler 同口径）
+                    result = _call_with_timeout(
+                        lambda: adapter.run_task(
+                            task, request_id=request_id, inputs=inputs
+                        ),
+                        timeout,
+                    )
+                else:
+                    result = adapter.run_task(
+                        task, request_id=request_id, inputs=inputs
+                    )
+            except TimeoutError:
+                result = Result(
+                    task_id=task.id,
+                    success=False,
+                    error=ErrorInfo(
+                        code="timeout",
+                        message=f"单次执行超过 {timeout}s（框架侧 wall-clock 超时）",
+                    ),
+                    retries=attempt,
+                )
             except Exception as e:  # 适配器层异常（网络等）→ 视为失败
                 result = Result(
                     task_id=task.id,
@@ -172,3 +197,28 @@ class Scheduler:
             dag.tasks[f].status == TaskStatus.SUCCESS for f in finals
         )
         return "partial" if any_final_success else "failed"
+
+
+def _call_with_timeout(fn, timeout_seconds: float):
+    """框架侧 wall-clock 封顶：调用超过 timeout_seconds 未返回则抛 TimeoutError。
+
+    用 daemon 线程执行——超时后调用方立即返回（不阻塞解释器退出），挂死的
+    调用不再被等待。这正是"给槽占用封顶"的目的：调度资源随超时释放，agent
+    侧即便不中断也不再拖住整个 run。
+    """
+    box: dict = {}
+
+    def _target() -> None:
+        try:
+            box["result"] = fn()
+        except BaseException as e:  # 原样回抛给调用方（含适配器自身异常）
+            box["error"] = e
+
+    th = threading.Thread(target=_target, daemon=True)
+    th.start()
+    th.join(timeout_seconds)
+    if th.is_alive():
+        raise TimeoutError(f"调用超过 {timeout_seconds}s 未返回")
+    if "error" in box:
+        raise box["error"]
+    return box["result"]

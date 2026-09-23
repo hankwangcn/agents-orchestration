@@ -104,22 +104,25 @@ class DeepSeekAdapter(AgentAdapter):
             result.duration_ms = meta["duration_ms"]
         return result
 
-    async def achat(self, prompt: str) -> str:
-        """异步裸聊天入口：供拆解引擎等框架内部组件复用同一适配器。"""
+    async def achat(self, prompt: str, temperature: float | None = None) -> str:
+        """异步裸聊天入口：供拆解引擎等框架内部组件复用同一适配器。
+
+        temperature 显式传入则覆盖实例默认值（拆解引擎按自身参数注入）。
+        """
         resp = await self._aclient.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=self.temperature,
+            temperature=self.temperature if temperature is None else temperature,
             max_tokens=self.max_tokens,
         )
         return resp.choices[0].message.content or ""
 
-    def chat(self, prompt: str) -> str:
+    def chat(self, prompt: str, temperature: float | None = None) -> str:
         """裸聊天入口：供拆解引擎（框架内部组件）复用同一适配器。"""
         resp = self._client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            temperature=self.temperature,
+            temperature=self.temperature if temperature is None else temperature,
             max_tokens=self.max_tokens,
         )
         return resp.choices[0].message.content or ""

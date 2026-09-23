@@ -166,7 +166,7 @@
           <div class="badge" style="--cc:#0284c7">API</div>
           <div class="card-main">
             <div class="card-title">API 网关 <span class="path">orchestration/api/gateway.py</span></div>
-            <div class="card-desc">FastAPI REST + RunManager：提交 DAG / 进度快照 / 收尾报告 / 运行指标 / 取消 run / agent 档案。框架从「库」到「系统」的入口，协议通信不暴露到 HTTP。</div>
+            <div class="card-desc">FastAPI REST + RunManager：目标拆解 <span class="path">/api/decompose</span> / 提交 DAG / 进度快照 / 收尾报告 / 运行指标 / 取消 run / 断点恢复 / 人工 resolve / agent 档案。框架从「库」到「系统」的入口，协议通信不暴露到 HTTP。</div>
           </div>
         </div>
         <div class="card">
@@ -204,8 +204,8 @@
           <div class="badge" style="--cc:#6d28d9">拆解</div>
           <div class="card-main">
             <div class="card-title">任务拆解引擎 <span class="path">orchestration/decomposer.py</span></div>
-            <div class="card-desc">LLM 将目标拆解为子任务 + 依赖 DAG（数据流依赖），拆解 Schema 严格校验。每个子任务声明 <span class="path">model / budget / timeout</span> 与能力标签 <span class="path">required_capabilities</span>——这是「谁适合干」的输入。</div>
-            <div class="chips"><span>输出：依赖 DAG</span><span>能力需求声明</span><span>Schema 校验</span></div>
+            <div class="card-desc">LLM 将目标拆解为子任务 + 依赖 DAG（数据流依赖），拆解 Schema 严格校验。每个子任务声明 <span class="path">model / budget / timeout</span> 与能力标签 <span class="path">required_capabilities</span>——这是「谁适合干」的输入。接入：网关 <span class="path">POST /api/decompose</span> · CLI <span class="path">ao decompose --submit</span>（目标 → 结果一条链）；重试带「失败原因 + 正确示例」。框架内部 LLM 调用，不走消息协议。</div>
+            <div class="chips"><span>输出：依赖 DAG</span><span>能力需求声明</span><span>Schema 校验</span><span>目标→DAG 接入</span></div>
           </div>
         </div>
       </div>
@@ -244,8 +244,8 @@
           <div class="badge" style="--cc:#0f766e">调度</div>
           <div class="card-main">
             <div class="card-title">调度器（同步 / 异步） <span class="path">scheduler.py · scheduler_async.py</span></div>
-            <div class="card-desc">拓扑派发；asyncio 并发推进（FIRST_COMPLETED），资源限制从统计走向执行：per-agent 并发上限（Semaphore）+ 滑动窗口限速。重试 N=2 指数退避 → 耗尽后失败传播 + 反向可达剪枝 → 取消下发（best-effort）。竞态处理：冻结派发 → 逐级取消 → 统一收尾，晚到结果丢弃。</div>
-            <div class="chips"><span>重试 N=2 指数退避</span><span>反向可达剪枝</span><span>取消 best-effort</span><span>竞态：冻结→取消→收尾</span></div>
+            <div class="card-desc">拓扑派发；asyncio 并发推进（FIRST_COMPLETED），资源限制从统计走向执行：per-agent 并发上限（Semaphore）+ 滑动窗口限速。单次尝试超过 <span class="path">timeout</span> 由框架强制中断（agent 挂死不再占住并发槽）。重试 N=2 指数退避 → 耗尽后失败传播 + 反向可达剪枝 → 取消下发（best-effort）。竞态处理：冻结派发 → 逐级取消 → 统一收尾，晚到结果丢弃。</div>
+            <div class="chips"><span>重试 N=2 指数退避</span><span>框架侧超时封顶</span><span>反向可达剪枝</span><span>取消 best-effort</span><span>竞态：冻结→取消→收尾</span></div>
           </div>
         </div>
       </div>
@@ -394,7 +394,7 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v1.4 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固（拆解 → 资源协调 → 并发调度 → 治理学习 → 崩溃恢复）· 232/232 测试全绿
+  <b>Agents Orchestration</b> · 架构 v1.5 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固 + 规划层接入（目标 → 拆解 → 资源协调 → 并发调度 → 治理学习 → 崩溃恢复）· 278/278 测试全绿
 </footer>
 
 </div>

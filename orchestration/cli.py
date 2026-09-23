@@ -1,8 +1,8 @@
 """agents-orchestration CLI —— 网关的瘦客户端（架构 §3.1 接入层）。
 
 定位：框架作为系统存在，上行是 HTTP API 网关。CLI **不绕过网关直连
-scheduler**——它只是网关的运维 / 人工出口客户端：提交 DAG、查进度 /
-报告 / 指标、取消、断点恢复、人工 resolve、看 agent 档案。
+scheduler**——它只是网关的运维 / 人工出口客户端：目标拆解（规划层）、
+提交 DAG、查进度 / 报告 / 指标、取消、断点恢复、人工 resolve、看 agent 档案。
 
 典型场景：
 - 人工出口刚需：resolve（complete/cancel/retry）与 resume 本就是"人工"
@@ -120,12 +120,26 @@ def cmd_serve(args: argparse.Namespace) -> int:
         registry = AgentRegistry()
         print("[serve] 警告：未提供 --config，注册表为空（可编程式接入或后补）")
     store = SqliteStateStore(args.state_store) if args.state_store else None
-    app, _ = create_app(registry, state_store=store)
+    # 规划层：拆解引擎（框架内部 LLM 调用，与外部 agent 无关）
+    decomposer = None
+    if not args.no_decompose:
+        try:
+            from orchestration.decomposer import make_default_decomposer
+
+            decomposer = make_default_decomposer(model=args.decompose_model)
+            print(f"[serve] 拆解引擎已启用（model={args.decompose_model}，"
+                  f"POST /api/decompose / ao decompose）")
+        except (ValueError, ImportError) as e:
+            print(f"[serve] 未启用拆解引擎：{e}")
+    else:
+        print("[serve] 拆解引擎已禁用（--no-decompose）")
+    app, _ = create_app(registry, state_store=store, decomposer=decomposer)
     if store:
         print(f"[serve] 断点持久化已启用：{args.state_store}"
               f"（resume / resolve 人工出口可用）")
     print(f"[serve] 网关已启动：http://{args.host}:{args.port}")
-    print("[serve] 查看 agent：ao agents | 提交：ao submit dag.json")
+    print("[serve] 查看 agent：ao agents | 拆解目标：ao decompose --goal '...' | "
+          "提交：ao submit dag.json")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 
@@ -170,6 +184,42 @@ def _prompt_dag() -> dict:
     except EOFError:
         ok = False
     return {"tasks": tasks} if ok else None
+
+
+def cmd_decompose(args: argparse.Namespace) -> int:
+    """目标 → DAG（规划层）：调网关 /api/decompose；--submit 时一并提交。"""
+    goal = args.goal
+    if not goal:
+        if not _is_tty():
+            raise CliError("缺少 --goal——请显式传入：ao decompose --goal '...'")
+        try:
+            goal = input("  目标（自然语言）: ").strip()
+        except EOFError:
+            goal = ""
+        if not goal:
+            raise CliError("缺少目标，取消")
+    payload: dict = {"goal": goal, "submit": bool(args.submit)}
+    if args.run_id:
+        payload["run_id"] = args.run_id
+    # 拆解是 LLM 调用，耗时远高于普通查询——单独放大超时
+    resp = _request("POST", _api(args.url, "/api/decompose"), payload, timeout=180)
+    dag = resp.get("dag") or {}
+    tasks = dag.get("tasks") or {}
+    print(f"拆解出 {len(tasks)} 个任务：")
+    rows = [
+        [tid, ", ".join(t.get("deps") or []) or "-", t.get("desc", "")]
+        for tid, t in tasks.items()
+    ]
+    print(_table(["task", "deps", "desc"], rows))
+    if resp.get("run_id"):
+        _session["run_id"] = resp["run_id"]
+        print(f"\nrun_id: {resp['run_id']}")
+        print(f"查询进度：ao status {resp['run_id']} | 等待结束：ao wait {resp['run_id']}")
+    else:
+        print("\nDAG JSON（保存后可用 ao submit 提交）：")
+        print(json.dumps(dag, ensure_ascii=False, indent=2))
+        print("\n直接提交：ao decompose --goal '...' --submit")
+    return 0
 
 
 def cmd_submit(args: argparse.Namespace) -> int:
@@ -235,7 +285,8 @@ def cmd_report(args: argparse.Namespace) -> int:
         print("\n剪枝（失败传播）：")
         for p in resp["prune_reports"]:
             root = p["root_failure"]
-            print(f"  ✕ 根失败 {root.get('task_id')}（{root.get('error', {}).get('code', '')}）"
+            # root_failure 的键是 {"task_id", "reason", "retries"}（无 error 子对象）
+            print(f"  ✕ 根失败 {root.get('task_id')}（{root.get('reason', '')}）"
                   f" → 剪枝 {len(p['pruned'])} 个任务"
                   + ("（含最终任务，整棵取消）" if p["pruned_final"] else ""))
     return 0
@@ -354,7 +405,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
 
 # 全部子命令名（tab 补全用）
 _COMMANDS = [
-    "serve", "submit", "status", "report", "metrics", "cancel",
+    "serve", "decompose", "submit", "status", "report", "metrics", "cancel",
     "resume", "resolve", "wait", "agents", "shell",
     "help", "exit", "quit",
 ]
@@ -396,11 +447,12 @@ def _setup_readline() -> None:
 
 def _shell_help() -> None:
     print("ao 交互 shell —— 逐行执行任意子命令，Ctrl-D / exit / quit 退出")
-    print("可用命令：serve submit status report metrics cancel resume "
+    print("可用命令：serve decompose submit status report metrics cancel resume "
           "resolve wait agents")
     print("  help/exit/quit     本帮助 / 退出")
     print("  run_id 记忆        submit 后自动记住 run_id，status/report/等"
           "可省略")
+    print("  decompose         目标 → DAG（--submit 一并提交）")
     print("  submit            不带文件时引导式提问构建 DAG")
     print("  resolve           缺 task_id/action 时逐项引导")
     print("  tab 补全          命令名 + 文件名；历史持久化 ~/.ao_history")
@@ -473,9 +525,20 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("serve", help="启动 API 网关（需 fastapi+uvicorn）")
     sp.add_argument("--config", help="agents.yaml/.json——批量注册 N 个 agent")
     sp.add_argument("--state-store", help="SQLite 断点持久化文件（启用 resume/resolve）")
+    sp.add_argument("--decompose-model", default="deepseek-chat",
+                    help="规划层拆解引擎使用的模型（默认 deepseek-chat，"
+                         "需 $DEEPSEEK_API_KEY）")
+    sp.add_argument("--no-decompose", action="store_true",
+                    help="禁用规划层拆解引擎（POST /api/decompose 返回 400）")
     sp.add_argument("--host", default="0.0.0.0")
     sp.add_argument("--port", type=int, default=8000)
     sp.set_defaults(func=cmd_serve)
+
+    sp = sub.add_parser("decompose", help="目标 → DAG（规划层拆解）")
+    sp.add_argument("--goal", help="自然语言目标（缺省交互引导输入）")
+    sp.add_argument("--submit", action="store_true", help="拆解后直接提交执行")
+    sp.add_argument("--run-id", help="--submit 时的自定义 run_id")
+    sp.set_defaults(func=cmd_decompose)
 
     sp = sub.add_parser("submit", help="提交 DAG（JSON 文件；不带文件时交互引导）")
     sp.add_argument("dag_file", nargs="?",

@@ -11,6 +11,10 @@
   → 统一解冻；被剪任务的晚到结果直接丢弃（不写 task.result、不计健康度）
 - **外部取消**（API 网关）：cancel_event 置位 → 整棵取消（PENDING 置
   CANCELLED、RUNNING 下发取消、等待收尾），final_status=cancelled
+- **框架侧 wall-clock 超时**：单次执行超过 task.required_resources.timeout
+  即 `asyncio.wait_for` 中断（内层协程取消 → 并发槽随 `async with sem`
+  释放，agent 挂死不再永久占住调度资源），产出 error.code=timeout 的
+  失败 Result，汇入既有重试/剪枝链路
 - **可观测性**：结构化日志 + MetricsCollector（按 run_id 隔离，
   同一实例可并发运行多个 run——RunManager 场景，状态全部在 _RunCtx 内）
 
@@ -446,9 +450,26 @@ class AsyncScheduler:
             if task.status in (TaskStatus.CANCELLED, TaskStatus.SKIPPED):
                 break  # 外部已判定取消 → 停止（不再烧钱）
             request_id = f"{task.id}:run:{attempt}"
+            timeout = task.required_resources.timeout
             try:
-                result = await adapter.arun_task(
-                    task, request_id=request_id, inputs=inputs
+                call = adapter.arun_task(task, request_id=request_id, inputs=inputs)
+                # 框架侧 wall-clock 超时：给"槽被挂死任务占住"封顶。
+                # 超时的不是声明给 agent 看的建议值，而是框架强制——
+                # asyncio.wait_for 取消内层协程（槽随 async with sem 释放），
+                # 产出失败 Result 汇入既有重试/剪枝链路。
+                if timeout and timeout > 0:
+                    result = await asyncio.wait_for(call, timeout=timeout)
+                else:
+                    result = await call
+            except asyncio.TimeoutError:
+                result = Result(
+                    task_id=task.id,
+                    success=False,
+                    error=ErrorInfo(
+                        code="timeout",
+                        message=f"单次执行超过 {timeout}s（框架侧 wall-clock 超时）",
+                    ),
+                    retries=attempt,
                 )
             except Exception as e:  # 适配器层异常（网络等）→ 视为失败
                 result = Result(

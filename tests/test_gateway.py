@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 from orchestration.api.gateway import RunManager, create_app
+from orchestration.decomposer import Decomposer
 from orchestration.models import DAG, Task, TaskStatus
 from orchestration.registry import AgentRegistry
 
@@ -113,6 +115,125 @@ class TestRunManager:
         snap = manager.agents_snapshot()
         assert snap["agent_001"]["model"] == "deepseek-chat"
         assert snap["agent_001"]["capabilities"] == ["code_review"]
+
+
+class TestDecompose:
+    """规划层接入（#29）：目标 → DAG（RunManager.decompose + POST /api/decompose）。"""
+
+    @staticmethod
+    def _decomposer(payload: dict) -> Decomposer:
+        return Decomposer(llm_call=lambda prompt: json.dumps(payload))
+
+    PAYLOAD = {
+        "tasks": [
+            {"id": "a", "desc": "第一步"},
+            {"id": "b", "desc": "第二步", "deps": ["a"]},
+        ]
+    }
+
+    def test_decompose_returns_dag_without_submitting(self):
+        reg = AgentRegistry()
+        reg.register(AsyncScriptedAdapter({}))
+        manager = RunManager(registry=reg, decomposer=self._decomposer(self.PAYLOAD))
+
+        out = asyncio.run(manager.decompose("做一件事"))
+
+        assert out["status"] == "decomposed"
+        assert out["run_id"] is None
+        assert set(out["dag"]["tasks"]) == {"a", "b"}
+        assert out["dag"]["tasks"]["b"]["deps"] == ["a"]
+        # 未提交 → 无 run
+        assert manager._runs == {}
+
+    def test_decompose_submit_runs_to_completion(self):
+        """submit=true：拆解 → 直接提交，返回的 run_id 可 wait 到报告（目标→结果一条链）。"""
+        adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
+        reg = AgentRegistry()
+        reg.register(adapter)
+        manager = RunManager(registry=reg, decomposer=self._decomposer(self.PAYLOAD))
+
+        async def _flow():
+            out = await manager.decompose("做一件事", submit=True)
+            return out, await manager.wait(out["run_id"])
+
+        out, report = asyncio.run(_flow())
+
+        assert out["status"] == "submitted"
+        assert out["run_id"]
+        assert report.final_status == "success"
+        assert set(report.results) == {"a", "b"}
+
+    def test_decompose_custom_run_id(self):
+        reg = AgentRegistry()
+        reg.register(AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]}))
+        manager = RunManager(registry=reg, decomposer=self._decomposer(self.PAYLOAD))
+        out = asyncio.run(manager.decompose("目标", submit=True, run_id="my-run"))
+        assert out["run_id"] == "my-run"
+
+    def test_decompose_without_engine_400(self):
+        reg = AgentRegistry()
+        reg.register(AsyncScriptedAdapter({}))
+        manager = RunManager(registry=reg)  # 未注入 decomposer
+        try:
+            asyncio.run(manager.decompose("目标"))
+            code = None
+        except Exception as e:
+            code = getattr(e, "status_code", None)
+        assert code == 400
+
+    def test_decompose_failure_maps_to_422(self):
+        """拆解连续不合规 → DecomposeError → 422（不是 500）。"""
+        reg = AgentRegistry()
+        reg.register(AsyncScriptedAdapter({}))
+        manager = RunManager(
+            registry=reg,
+            decomposer=Decomposer(llm_call=lambda prompt: "不是 JSON", max_retries=0),
+        )
+        try:
+            asyncio.run(manager.decompose("目标"))
+            code = None
+        except Exception as e:
+            code = getattr(e, "status_code", None)
+        assert code == 422
+
+    def test_decompose_http_endpoint(self):
+        """HTTP 端到端：POST /api/decompose（拆解 + 直接提交 + 轮询报告）。"""
+        adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
+        reg = AgentRegistry()
+        reg.register(adapter)
+        app, _ = create_app(reg, decomposer=self._decomposer(self.PAYLOAD))
+
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            resp = client.post("/api/decompose", json={"goal": "做一件事"})
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "decomposed"
+            assert set(resp.json()["dag"]["tasks"]) == {"a", "b"}
+
+            resp = client.post(
+                "/api/decompose", json={"goal": "做一件事", "submit": True}
+            )
+            assert resp.status_code == 200
+            run_id = resp.json()["run_id"]
+
+            report = None
+            for _ in range(100):
+                r = client.get(f"/api/runs/{run_id}/report")
+                if r.status_code == 200:
+                    report = r.json()
+                    break
+                time.sleep(0.02)
+            assert report and report["final_status"] == "success"
+
+    def test_decompose_endpoint_400_without_engine(self):
+        reg = AgentRegistry()
+        reg.register(AsyncScriptedAdapter({}))
+        app, _ = create_app(reg)  # 未注入拆解引擎
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            resp = client.post("/api/decompose", json={"goal": "目标"})
+            assert resp.status_code == 400
+            assert "拆解引擎" in resp.json()["detail"]
 
 
 class TestGatewayAPI:

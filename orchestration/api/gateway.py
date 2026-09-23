@@ -1,8 +1,8 @@
 """API 网关（阶段四：框架从"库"到"系统"的入口）。
 
-形态：FastAPI REST。职责：提交 DAG、查询进度、获取结果/审计、取消 run、
-查看 agent 注册表快照。协议面保持"框架永远主动"——网关只受理框架自己的
-请求，agent 侧的协议通信仍在适配器层，不暴露到 HTTP。
+形态：FastAPI REST。职责：目标拆解（规划层 → DAG）、提交 DAG、查询进度、
+获取结果/审计、取消 run、查看 agent 注册表快照。协议面保持"框架永远主动"
+——网关只受理框架自己的请求，agent 侧的协议通信仍在适配器层，不暴露到 HTTP。
 
 RunManager 管理 run 生命周期（run_id → 后台 asyncio.Task + 状态快照），
 同一 AsyncScheduler 实例可并发运行多个 run（_RunCtx 状态隔离）。
@@ -17,6 +17,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from ..decomposer import DecomposeError, Decomposer
 from ..metrics import MetricsCollector, configure_logging, log_event
 from ..models import DAG, Result, TaskStatus
 from ..registry import AgentRegistry
@@ -56,10 +57,12 @@ class RunManager:
         retries: int = 2,
         metrics: Optional[MetricsCollector] = None,
         state_store: Optional[StateStore] = None,
+        decomposer: Optional[Decomposer] = None,
     ):
         self._registry = registry
         self._metrics = metrics or MetricsCollector()
         self._store = state_store
+        self._decomposer = decomposer
         self._scheduler = AsyncScheduler(
             registry=registry,
             retries=retries,
@@ -95,6 +98,42 @@ class RunManager:
             log_event("run_error", run_id=handle.run_id, error=str(e))
         finally:
             handle.finished_at = _now()
+
+    # ---------- 规划层接入：目标 → DAG ----------
+
+    async def decompose(
+        self,
+        goal: str,
+        submit: bool = False,
+        run_id: Optional[str] = None,
+    ) -> dict:
+        """把自然语言目标拆解为 DAG（规划层头部接入）。
+
+        submit=True 时拆解完直接提交，返回的 run_id 可用于后续
+        status/report/metrics——"目标 → 结果"一条链走完。
+        """
+        if self._decomposer is None:
+            raise HTTPException(
+                status_code=400,
+                detail="未配置拆解引擎（规划层）——请设置环境变量 "
+                       "DEEPSEEK_API_KEY 后重启 serve，或注入自定义 decomposer",
+            )
+        try:
+            # 拆解是同步 LLM 调用（框架内部组件，不走协议），丢线程池避免阻塞事件循环
+            dag = await asyncio.to_thread(self._decomposer.decompose, goal)
+        except DecomposeError as e:
+            raise HTTPException(status_code=422, detail=f"拆解失败：{e}") from None
+        out = {
+            "goal": goal,
+            "status": "decomposed",
+            "dag": dag.model_dump(mode="json"),
+            "run_id": None,
+        }
+        log_event("goal_decomposed", dag_size=len(dag.tasks), submit=submit)
+        if submit:
+            out["run_id"] = await self.submit(dag, run_id=run_id)
+            out["status"] = "submitted"
+        return out
 
     # ---------- 查询 ----------
 
@@ -326,6 +365,12 @@ class DagSubmit(BaseModel):
     run_id: Optional[str] = None
 
 
+class DecomposeRequest(BaseModel):
+    goal: str = Field(description="自然语言目标——由规划层拆解为任务 DAG")
+    submit: bool = Field(default=False, description="拆解后直接提交执行")
+    run_id: Optional[str] = Field(default=None, description="submit 时的自定义 run_id")
+
+
 class TaskResolve(BaseModel):
     action: str = Field(description="complete | cancel | retry")
     result: Optional[dict] = Field(default=None, description="complete 时的人工核实结果契约")
@@ -336,14 +381,17 @@ def create_app(
     retries: int = 2,
     metrics: Optional[MetricsCollector] = None,
     state_store: Optional[StateStore] = None,
+    decomposer: Optional[Decomposer] = None,
 ) -> tuple[FastAPI, RunManager]:
     """构造 (app, manager)。registry 需已注册 agent（可先 collect 能力声明）。
 
     state_store：启用断点持久化（SQLite 等），提供 resume / resolve 端点。
+    decomposer：启用规划层拆解（POST /api/decompose）——未注入则端点返回 400。
     """
     configure_logging()
     manager = RunManager(
-        registry, retries=retries, metrics=metrics, state_store=state_store
+        registry, retries=retries, metrics=metrics, state_store=state_store,
+        decomposer=decomposer,
     )
     app = FastAPI(
         title="Agents Orchestration Gateway",
@@ -357,6 +405,13 @@ def create_app(
         dag = DAG.model_validate(payload.dag)
         run_id = await manager.submit(dag, run_id=payload.run_id)
         return {"run_id": run_id, "status": "submitted"}
+
+    @app.post("/api/decompose")
+    async def decompose_goal(payload: DecomposeRequest) -> dict:
+        """目标 → DAG（规划层）；submit=true 时拆解后直接提交。"""
+        return await manager.decompose(
+            payload.goal, submit=payload.submit, run_id=payload.run_id
+        )
 
     @app.get("/api/runs/{run_id}")
     async def run_status(run_id: str) -> dict:

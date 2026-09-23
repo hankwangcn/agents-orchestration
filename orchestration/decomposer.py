@@ -1,12 +1,22 @@
-"""任务拆解引擎（架构 §3.2）：LLM 将目标拆解为子任务 + 依赖 DAG。
+"""任务拆解引擎（架构 §3.2 规划层）：LLM 将目标拆解为子任务 + 依赖 DAG。
 
-拆解是框架内部组件，不经过消息协议（协议是框架 ↔ 外部 agent 的边界）；
-直接调用底层 LLM，输出按拆解 Schema 严格校验（缺字段 / 引用不存在的
+拆解是框架内部组件，**不经过消息协议**（协议是框架 ↔ 外部 agent 的边界）；
+框架直接调用底层 LLM，输出按拆解 Schema 严格校验（缺字段 / 引用不存在的
 依赖 / 成环均拒绝并重试）。
+
+重试口径与解析组件（协议 §7.3）对齐：首次不合规**不重放同一提示词**，
+而是把失败原因 + 正确示例追加进提示词再试一次——"给示例比给指令在格式
+稳定性上稳一个量级"（项目准则）。
+
+DAG 是任务的统一描述抽象（对话共识）：无依赖 = 默认并行，有依赖 = 串/并
+混合，都在同一 DAG 表达内；依赖结构在提交时一次性给定（批处理"任务→
+结果"定位下不支持运行中动态扩图）。
 """
 from __future__ import annotations
 
-from typing import Callable
+import inspect
+import json
+from typing import Callable, Optional
 
 from .models import DAG, ResourceRequirement, SideEffects, Task
 from .validation import ResponseValidationError, extract_json
@@ -43,30 +53,64 @@ DECOMPOSITION_PROMPT = """你是任务拆解引擎。将用户目标拆解为可
 3. 拆分粒度：每个任务可在一次 LLM 调用内独立完成，不要过度拆分
 """
 
+# 正确拆解示例：重试修正提示用（口径同协议 §7.3——失败原因 + 正确示例）
+DECOMPOSITION_EXAMPLE: dict = {
+    "tasks": [
+        {
+            "id": "task_001",
+            "desc": "抓取目标站点的产品价格列表",
+            "deps": [],
+            "model": "deepseek-chat",
+            "required_capabilities": ["web_scraping"],
+            "side_effects": "external_api",
+        },
+        {
+            "id": "task_002",
+            "desc": "把抓取结果整理为比价报告",
+            "deps": ["task_001"],
+            "model": "deepseek-chat",
+            "required_capabilities": ["report_writing"],
+            "side_effects": "none",
+        },
+    ]
+}
+
 
 class DecomposeError(Exception):
     """拆解失败：输出非法或重试后仍无法通过 Schema 校验。"""
 
 
 class Decomposer:
-    """目标 → DAG。llm_call 接收完整提示词文本，返回模型原始响应。"""
+    """目标 → DAG。
+
+    llm_call：接收完整提示词文本，返回模型原始响应。若其签名接受
+    ``temperature`` 关键字参数，则注入 ``self.temperature``（否则忽略——
+    调用方可自行在闭包里固化温度）。**框架内部 LLM 调用，不走消息协议。**
+    """
 
     def __init__(
         self,
-        llm_call: Callable[[str], str],
+        llm_call: Callable[..., str],
         max_retries: int = 1,
         temperature: float = 0.2,
     ):
         self._llm_call = llm_call
         self.max_retries = max_retries
         self.temperature = temperature
+        self._passes_temperature = _accepts_kwarg(llm_call, "temperature")
 
     def decompose(self, goal: str) -> DAG:
-        prompt = f"{DECOMPOSITION_PROMPT}\n\n用户目标：{goal}"
-        last_error: Exception | None = None
+        """目标 → DAG；连续 max_retries + 1 次不合规则抛 DecomposeError。"""
+        base_prompt = f"{DECOMPOSITION_PROMPT}\n\n用户目标：{goal}"
+        last_error: Optional[Exception] = None
 
         for attempt in range(self.max_retries + 1):
-            raw = self._llm_call(prompt)
+            # 首次用基础提示词；重试追加"失败原因 + 正确示例"（§7.3 口径）
+            prompt = (
+                base_prompt if attempt == 0
+                else _correction_prompt(base_prompt, last_error)
+            )
+            raw = self._invoke(prompt)
             try:
                 obj = extract_json(raw)
                 return self._build_dag(obj)
@@ -76,6 +120,12 @@ class Decomposer:
         raise DecomposeError(
             f"拆解输出连续 {self.max_retries + 1} 次未通过 Schema 校验：{last_error}"
         ) from last_error
+
+    def _invoke(self, prompt: str) -> str:
+        """调用底层 LLM（支持 temperature 注入的调用方按需传入）。"""
+        if self._passes_temperature:
+            return self._llm_call(prompt, temperature=self.temperature)
+        return self._llm_call(prompt)
 
     def _build_dag(self, obj) -> DAG:
         """把拆解输出校验为合法 DAG：非空、依赖引用存在、无环、有 final。"""
@@ -151,3 +201,46 @@ class Decomposer:
             raise ResponseValidationError("不存在最终交付任务（出度为 0 的任务）")
 
         return dag
+
+
+def _correction_prompt(base_prompt: str, error: Optional[Exception]) -> str:
+    """重试修正提示（口径同协议 §7.3）：失败原因 + 正确示例。"""
+    return (
+        f"{base_prompt}\n\n"
+        f"【上一次输出不合规】{error}\n"
+        "请严格按下面的正确示例重新输出（只输出 JSON，不要其他内容）：\n"
+        f"{json.dumps(DECOMPOSITION_EXAMPLE, ensure_ascii=False, indent=2)}"
+    )
+
+
+def _accepts_kwarg(fn: Callable[..., object], name: str) -> bool:
+    """调用方签名是否接受某关键字参数（含 **kwargs）。无法内省时视为否。"""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    if name in params:
+        return True
+    return any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
+def make_default_decomposer(
+    model: str = "deepseek-chat",
+    temperature: float = 0.2,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> Decomposer:
+    """默认拆解引擎：复用 DeepSeekAdapter 的裸聊天入口（同一套端点与鉴权）。
+
+    api_key 缺省回落到环境变量 DEEPSEEK_API_KEY；两者皆无则抛 ValueError——
+    由调用方决定是否启用拆解能力（框架其余功能不依赖拆解引擎）。
+    """
+    from .adapters.deepseek import DeepSeekAdapter
+
+    kwargs: dict = {"model": model, "temperature": temperature}
+    if api_key:
+        kwargs["api_key"] = api_key
+    if base_url:
+        kwargs["base_url"] = base_url
+    adapter = DeepSeekAdapter(**kwargs)
+    return Decomposer(llm_call=adapter.chat, temperature=temperature)

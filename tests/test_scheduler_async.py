@@ -2,19 +2,17 @@
 
 覆盖：并发派发（时间重叠）、并发上限（per-agent semaphore）、速率限制、
 失败剪枝竞态（冻结→逐级取消→收尾→晚到结果丢弃）、独立分支存活、
-外部取消（cancel_event）、多 run 并发状态隔离、metrics 记录。
+外部取消（cancel_event）、多 run 并发状态隔离、metrics 记录、
+资源画像刷新接线、框架侧 wall-clock 超时（#34）。
 """
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import Optional
 
-from orchestration.adapters.base import AgentAdapter
 from orchestration.metrics import MetricsCollector
 from orchestration.models import (
     DAG,
-    ErrorInfo,
     ResourceRequirement,
     Result,
     Task,
@@ -509,3 +507,76 @@ class TestRefreshWiring:
         run(sched, dag)
         # 池级刷新跳过（新鲜），仅派发决策点仍有 2 次易变维度校验
         assert adapter.info_scopes[len(before):] == ["resource", "constraint"]
+
+
+class TestFrameworkTimeout:
+    """#34：框架侧 wall-clock 超时——required_resources.timeout 从"声明给 agent
+    的建议值"变为框架强制执行，agent 挂死不再永久占住并发槽。"""
+
+    def test_hanging_task_times_out_and_fails(self):
+        dag = DAG(tasks={
+            "a": Task(id="a", desc="a",
+                      required_resources=ResourceRequirement(timeout=1)),
+        })
+        adapter = AsyncScriptedAdapter({"a": [ok("a")]}, delay=30)  # 挂死
+        sched, _ = make_scheduler(adapter, retries=0)
+
+        t0 = time.monotonic()
+        report = run(sched, dag)
+        elapsed = time.monotonic() - t0
+
+        assert elapsed < 5, f"超时未生效：elapsed={elapsed}"
+        assert report.final_status == "failed"
+        assert dag.tasks["a"].status == TaskStatus.FAILED
+        assert report.results["a"].error.code == "timeout"
+        # 槽随 async with sem 退出而释放（wait_for 取消内层协程）
+        assert not sched._sems["agent_001"].locked()
+
+    def test_timeout_releases_slot_for_next_run(self):
+        """超时后同一 agent 仍可派发——挂死调用不再永久占住并发槽。
+
+        （若槽泄漏，第二次 run 会永久阻塞在 async with sem 上，故设 5s 上限。）
+        """
+        adapter = AsyncScriptedAdapter(
+            {"slow": [ok("slow")], "quick": [ok("quick")]}, delay=30
+        )
+        adapter.script_delay["quick"] = 0.0
+        sched, _ = make_scheduler(adapter, retries=0)
+
+        dag1 = DAG(tasks={"slow": Task(
+            id="slow", desc="s", required_resources=ResourceRequirement(timeout=1))})
+        assert run(sched, dag1).final_status == "failed"
+
+        dag2 = DAG(tasks={"quick": Task(id="quick", desc="q")})
+        r2 = asyncio.run(asyncio.wait_for(sched.run(dag2), timeout=5))
+        assert r2.final_status == "success"
+
+    def test_timeout_zero_disables_framework_timeout(self):
+        """timeout<=0 = 不设超时：慢任务照常跑完（不被框架中断）。"""
+        dag = DAG(tasks={"a": Task(
+            id="a", desc="a", required_resources=ResourceRequirement(timeout=0))})
+        adapter = AsyncScriptedAdapter({"a": [ok("a")]}, delay=0.2)
+        sched, _ = make_scheduler(adapter, retries=0)
+
+        t0 = time.monotonic()
+        report = run(sched, dag)
+        assert report.final_status == "success"
+        assert time.monotonic() - t0 >= 0.2
+
+    def test_timeout_feeds_retry_then_prune(self):
+        """超时汇入既有重试链路：每次尝试各自计时，耗尽后失败传播/剪枝。"""
+        dag = DAG(tasks={
+            "a": Task(id="a", desc="a",
+                      required_resources=ResourceRequirement(timeout=1)),
+            "b": Task(id="b", desc="b", deps=["a"]),
+        })
+        adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]}, delay=30)
+        sched, _ = make_scheduler(adapter, retries=1)  # 2 次尝试，各 1s
+
+        report = run(sched, dag)
+
+        assert report.results["a"].retries == 1  # 最后一次尝试的序号
+        assert report.results["a"].error.code == "timeout"
+        assert dag.tasks["b"].status == TaskStatus.CANCELLED  # 下游剪枝
+        assert report.prune_reports and report.prune_reports[0].pruned_final
+        assert report.final_status == "failed"

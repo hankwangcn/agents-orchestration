@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-08-15
-> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固，232/232 测试全绿）
+> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固 + 规划层接入，278/278 测试全绿）
 
 ---
 
@@ -93,7 +93,7 @@ flowchart TB
 
 | 模块 | 职责 | 关键输入 → 输出 |
 |---|---|---|
-| 任务拆解引擎 | LLM 将目标拆解为子任务 + 依赖 DAG | 目标 → `DAG{Task[]}` |
+| 任务拆解引擎 | LLM 将目标拆解为子任务 + 依赖 DAG；接入形态 = 网关 `POST /api/decompose` + CLI `ao decompose`（`--submit` 目标→DAG→提交一条链）；重试口径同协议 §7.3（失败原因 + 正确示例） | 目标 → `DAG{Task[]}` |
 | 资源统计器 | info_request 采集 agent 能力 / 资源 / 约束声明（阶段三 `AgentRegistry`）；刷新策略 = **TTL 惰性刷新 + 决策点校验**——池级 `ensure_fresh()` 读时过期即刷，派发前 `validate_before_dispatch()` 对选中 agent 复核易变维度（resource/constraint） | agent 池 → `AgentProfile[]` |
 | 依赖分析 | 标注数据流依赖（A 的结果是 B 的输入） | `DAG` → `DependencyGraph` |
 | 资源协调器 | 在多个可用 agent / 模型间分配资源，防超配 | `ResourcePlan` + agent 池 → `Allocation` |
@@ -145,6 +145,7 @@ flowchart TB
 }
 ```
 
+> `required_resources.timeout`：**框架侧强制**的 wall-clock 上限（单次尝试，秒）——超时即中断并判失败（`error.code=timeout`），汇入重试/剪枝；同时随 `constraints` 声明给 agent 作建议值。`<=0` 表示不设超时；重试各自计时，故单任务最长占用 ≈ `timeout × (retries+1) + 退避`。
 > `required_capabilities`：任务的能力需求标签（拆解层声明，阶段三起按能力匹配 agent，见 `AgentRegistry`）；为空时只按 `required_resources.model` 匹配。
 
 ### 4.2 结果契约 Result（框架一切逻辑的枢纽）
@@ -181,6 +182,8 @@ flowchart TB
 ## 5. 失败处理：失败传播 + 死任务剪枝
 
 ### 5.1 分层策略
+
+框架侧 wall-clock 超时是"失败"的一种来源：单次尝试超过 `required_resources.timeout` 由框架强制中断（异步 `asyncio.wait_for` / 同步 daemon 线程 join），产出 `error.code=timeout` 的失败 Result——避免 agent 挂死时并发槽被永久占用（配额等待随之自然有界），且不依赖 agent 履约（同取消契约 D5 的口径）。超时**不改**下线协议的约束字段语义：`constraints.timeout_seconds` 仍是声明给 agent 的建议值，强制者是框架自己。
 
 ```mermaid
 flowchart LR
@@ -307,6 +310,7 @@ flowchart LR
 - [x] **代码审查修复：多 run 并发加固 + 一致性收尾**（2026-09-02 完成）— ①AsyncScheduler 派发循环：ready 任务因 per-agent 并发槽被其他 run 占用（RunManager 共用单 AsyncScheduler，_sems 跨 run 共享）时等待槽位释放后重派——原缺陷把配额阻塞误判为依赖失败不可达，并发提交的 run 全任务误标 SKIPPED 且 final_status=success 静默丢交付（回归：test_scheduler_async.py::TestMultiRunQuota）；②metrics 峰值并发按 agent 记账（原把全 DAG 的 RUNNING 数虚记到单 agent 名下，多 agent 并行时 peak_concurrency 虚高）；③`_RateLimiter` 落地为真滑动窗口（时间戳队列，窗口边界无 2×limit 突发，实现与文档口径一致）；④REPL 非 CliError 异常（submit 文件不存在/JSON 损坏等 OSError/json.JSONDecodeError）报错不退出会话（回归：test_cli_shell.py::test_non_cli_error_does_not_exit_session）；⑤pyflakes 清零（未使用导入 ×5、未使用变量 ×2、f-string ×3），visualize_report agent 摘除徽标 literal-brace 显示缺陷顺带修复。测试 221/221 全绿，见 §10
 - [x] **一致性收尾补遗：constraint 分流 + 运行中快照 agent**（2026-09-07 完成）— ①constraint 采集分流（registry.py）：q1 为混合自由文本（如"工作时间 9点~18点；禁止访问外网"），原实现整段扫入 forbidden——时间窗短语污染约束匹配/审计/学习规则的输入口径；现按 `_is_time_window`（~/点/window/时间窗）分流归 time_windows，"无"（含空白变体）不计入任何一方（回归：test_registry.py::TestCollect 两项）；②网关运行中快照 agent 字段（gateway.py + scheduler_async.py）：原 `_task_agent` 依赖 ScheduleReport（仅收尾后生成），运行中/RUNNING 快照 tasks[].agent 恒空串；现 AsyncScheduler 托管 live 分配映射（run 注册/_run_loop finally 注销，异常路径不留幽灵状态），新增 `task_agents(run_id)` 查询，网关运行中从 live 映射读取——任务派发即有归属（回归：test_gateway.py::test_running_snapshot_has_agent）。测试 224/224 全绿，见 §10
 - [x] **规划层定标①：删除 time_windows + 资源池刷新策略落地**（2026-09-23 完成）— 对话裁定：①`time_windows` 字段**删除**（采集但无任何消费方，属悬空声明；约束口径收敛为功能限制 `forbidden` + `languages`，时间窗文本由 `_looks_like_time_window` 从 forbidden 中剔除——不重蹈 09-07 前污染覆辙）；②资源池刷新 = **TTL 惰性刷新 + 决策点校验**：`RegisteredAgent.last_collected_at` + `collect_ttl_seconds`（默认 300s）判过期；池级 `ensure_fresh()` 在读时对过期 agent 重采（新鲜零开销，`AsyncScheduler.run` 起点调用）——保证三级分配看到的池级画像不陈旧；决策点 `validate_before_dispatch()` 在**派发前**对选中的目标 agent 复核易变维度 `VOLATILE_SCOPES`（resource/constraint，capability 变化慢交给池级 TTL），失败保留上次已知值不阻塞派发（同步/异步双路径，同步 `Scheduler` 与 `AsyncScheduler` 均已接线；`validate_on_dispatch` 可关）。约束采集问题 q1 同步改为"功能限制"措辞。回归：test_registry.py::TestRefresh 六项 + test_scheduler_async.py::TestRefreshWiring 两项（接线：池级 3 类各一次 + 决策点 resource/constraint；新鲜 skip 验证）。测试 232/232 全绿，见 §10
+- [x] **规划层详细设计：拆解接入（#29）+ 拆解引擎测试与修正重试（#30）+ 执行层 wall-clock 超时（#34）**（2026-09-23 完成）— ①**拆解接入**（gateway.py / cli.py / decomposer.py）：规划层头部"目标 → DAG"原本只在库中可用（`POST /api/runs` 入参已是 DAG、`ao submit` 只收 JSON 或引导式建 DAG），对使用方断链——新增 `POST /api/decompose`（body `{goal, submit, run_id}`；`submit=true` 拆解后直接提交并返回 run_id，"目标 → 结果"一条链）与 CLI `ao decompose --goal '...' [--submit] [--run-id]`（不带 `--submit` 打印 DAG JSON 供审阅/落盘）；`create_app(..., decomposer=)` 注入拆解引擎，`make_default_decomposer()` 复用 `DeepSeekAdapter.chat` 的裸聊天入口（同一套端点/鉴权，key 读 `$DEEPSEEK_API_KEY`），缺失时端点返回 400 而框架其余功能不受影响；`ao serve` 自动装配（`--decompose-model` / `--no-decompose` 可调）；分解是同步 LLM 调用（框架内部组件，**不走消息协议**），经 `asyncio.to_thread` 执行不阻塞事件循环，`DecomposeError` → HTTP 422。②**拆解引擎测试与重试口径**（decomposer.py / adapters/deepseek.py）：拆解重试原样重放同一提示词，与解析组件（§7.3）口径不一致——改为把"失败原因 + 正确拆解示例"追加进提示词再试（`DECOMPOSITION_EXAMPLE`，"给示例比给指令稳一个量级"）；构造参数 `temperature` 原为死参数（从未传给 `llm_call`）——现按调用方签名内省注入（`_accepts_kwarg`），`DeepSeekAdapter.chat/achat` 增加 `temperature` 覆盖参数；新增 `tests/test_decomposer.py` 28 项（Schema 七关逐关断言 + 修正提示重试 + temperature 注入/跳过 + 默认引擎接线 + 重试耗尽），其中"至少一个 final"关为无环非空图的不可达防守分支，以 monkeypatch 覆盖。③**执行层 wall-clock 超时**（scheduler_async.py / scheduler.py / models.py）：`required_resources.timeout`（默认 300）原仅拼进请求载荷——是声明给 agent 的建议值，框架侧无消费方，agent 挂死时并发槽被永久占用、run 停在 running 空转；现单次尝试超过该值即由框架强制中断：异步 `asyncio.wait_for`（取消内层协程 → 槽随 `async with sem` 释放）、同步 daemon 线程 join（不阻塞解释器退出），产出 `Result(success=False, error.code=timeout)` 汇入既有重试/剪枝链路；`<=0` 关闭。回归：test_decomposer.py 28 项 + test_gateway.py::TestDecompose 七项 + test_scheduler_async.py::TestFrameworkTimeout 四项 + test_scheduler.py::TestFrameworkTimeout 三项 + test_cli.py::TestDecompose 三项；顺带修复 CLI 剪枝根因打印恒空（读错 key `error.code` → `reason`，回归：test_cli.py::test_report_prune_root_reason）。冒烟：新增 `scripts/smoke_decompose.py`（真实 DeepSeek 拆解 + mock agents 真实 HTTP 执行 + 真实 CLI 调网关；14/14 断言通过，含超时与槽位释放验证）。测试 278/278 全绿，见 §10
 
 ---
 
@@ -340,7 +344,10 @@ agentsOrchestration/
 │   ├── messaging-protocol.md
 │   └── architecture-diagram.html
 ├── scripts/
+│   ├── mock_agents.py          # 本地 OpenAI 兼容 mock agent 服务（全流程测试无需真实 LLM）
 │   ├── smoke_deepseek.py       # 真实 DeepSeek 端到端冒烟（README 有运行说明）
+│   ├── smoke_multiagent.py     # 多 agent 全流程冒烟（mock agents，--visual 出 HTML）
+│   ├── smoke_decompose.py      # 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
 │   └── smoke_resume.py         # 断点恢复冒烟：崩溃 → 恢复 → 续跑（§5.5）
 ├── orchestration/           # 主包
 │   ├── models.py            # Task / Result / Assignment / DAG（含图算法）/ ScheduleReport
@@ -359,10 +366,12 @@ agentsOrchestration/
 │   │   └── gateway.py       # API 网关：RunManager + FastAPI 端点（阶段四）
 │   └── adapters/
 │       ├── base.py          # AgentAdapter 抽象基类（同步 + 异步双路径）
-│       └── deepseek.py     # DeepSeek 适配器（AsyncOpenAI 真异步，key 读 $DEEPSEEK_API_KEY）
+│       ├── deepseek.py      # DeepSeek 适配器（OpenAI 兼容，AsyncOpenAI 真异步）
+│       └── inprocess.py     # 进程内适配器（同进程 Python agent 直调本地函数，免 HTTP）
 └── tests/
     ├── helpers.py             # 测试共享：异步脚本适配器 + 快速构造（阶段四）
     ├── test_validation.py
+    ├── test_decomposer.py    # 拆解引擎：Schema 七关 / 修正重试 / temperature 接线
     ├── test_scheduler.py
     ├── test_scheduler_async.py # 并发调度 / 竞态 / 资源限制（阶段四）
     ├── test_registry.py
@@ -372,5 +381,6 @@ agentsOrchestration/
     ├── test_learning.py       # 自我学习规则（阶段二）
     ├── test_metrics.py        # 指标收集 + 结构化日志（阶段四）
     ├── test_gateway.py        # API 网关（阶段四）
-    └── test_resume.py         # 断点持久化 + 恢复（A+B 策略，§5.5）
+    ├── test_resume.py         # 断点持久化 + 恢复（A+B 策略，§5.5）
+    └── test_cli_shell.py      # REPL 交互会话（run_id 记忆 / 引导式提交 / 错误不退会话）
 ```

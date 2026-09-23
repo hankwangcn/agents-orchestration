@@ -28,7 +28,12 @@ class SideEffects(str, Enum):
 
 
 class ResourceRequirement(BaseModel):
-    """任务资源需求（架构 §4.1 required_resources）。"""
+    """任务资源需求（架构 §4.1 required_resources）。
+
+    timeout：单次执行的 wall-clock 上限（秒），**框架侧强制**——超时即中断
+    并判失败，汇入重试/剪枝；同时随 constraints 声明给 agent 作为建议值。
+    <=0 表示不设超时。
+    """
     model: str = "deepseek-chat"
     budget: float = 1.0
     timeout: int = 300

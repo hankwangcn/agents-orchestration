@@ -4,6 +4,7 @@
 双分支独立交付（多 final 时只剪失败分支）、全链失败（整棵取消）、
 完整调度运行（输入传递 + 成本核算 + 状态机）。
 """
+import time
 from typing import Optional
 
 from orchestration.adapters.base import AgentAdapter
@@ -366,3 +367,54 @@ class TestSchedulerAssignments:
         assert b_assign.match_type == "exact"
         assert b_assign.agent_id == "agent_002"
         assert report.final_status == "partial"
+
+
+class BlockingAdapter(AgentAdapter):
+    """同步阻塞 adapter：模拟挂死的 agent（sleep 远长于任务声明的 timeout）。"""
+
+    def __init__(self, block: float, model: str = "deepseek-chat"):
+        super().__init__(model=model)
+        self.block = block
+        self.calls: list[str] = []
+
+    def run_task(self, task: Task, request_id: str, inputs=None) -> Result:
+        self.calls.append(task.id)
+        time.sleep(self.block)
+        return Result(task_id=task.id, success=True, output={})
+
+    def _call_llm(self, messages: list[dict]) -> str:
+        raise NotImplementedError
+
+
+class TestFrameworkTimeout:
+    """#34（同步路径）：框架侧 wall-clock 超时封顶挂死的 agent 调用。"""
+
+    def test_hanging_task_times_out(self):
+        dag = DAG(tasks={"a": Task(
+            id="a", desc="a", required_resources=ResourceRequirement(timeout=1))})
+        adapter = BlockingAdapter(block=5)
+        sched, _ = make_scheduler(adapter, retries=0)
+
+        t0 = time.monotonic()
+        report = sched.run(dag)
+        elapsed = time.monotonic() - t0
+
+        assert elapsed < 3, f"超时未生效：elapsed={elapsed}"
+        assert report.final_status == "failed"
+        assert report.results["a"].error.code == "timeout"
+        assert dag.tasks["a"].status == TaskStatus.FAILED
+
+    def test_normal_task_unaffected(self):
+        dag = dag_of(("a", []))
+        adapter = ScriptedAdapter({"a": [ok("a")]})
+        sched, _ = make_scheduler(adapter, retries=0)
+        report = sched.run(dag)  # timeout 默认 300s，正常任务不受影响
+        assert report.final_status == "success"
+
+    def test_timeout_zero_disables_framework_timeout(self):
+        dag = DAG(tasks={"a": Task(
+            id="a", desc="a", required_resources=ResourceRequirement(timeout=0))})
+        adapter = BlockingAdapter(block=0.2)
+        sched, _ = make_scheduler(adapter, retries=0)
+        report = sched.run(dag)
+        assert report.final_status == "success"

@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-232%2F232%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-278%2F278%20passing-brightgreen)](tests/)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不监控 agent 内部状态。**
 
@@ -17,16 +17,18 @@
 |---|---|
 | **结果导向编排** | 框架只管理任务到结果的结果契约，不监控 agent 内部运行状态；批处理式"任务 → 结果"执行，过程交给 agent 自己 |
 | **断点持久化** | 调度状态（DAG / 任务状态 / 分配 / 剪枝）事件驱动落盘 SQLite；进程崩溃后无缝恢复——纯产出任务自动重派，副作用任务置 `INTERRUPTED` 等人工确认，已终态任务复用结果与成本 |
+| **目标即入口** | 一句自然语言目标 → 规划层拆解为任务 DAG →（可选）直接提交执行：网关 `POST /api/decompose` / CLI `ao decompose --submit`，"目标 → 结果"一条链；拆解是框架内部 LLM 调用，**不走消息协议** |
 | **提示词即协议** | 与 agent 的唯一沟通方式是格式化提示词模板 + JSON 请求（`task_request` / `info_request`）；agent 零适配，协议演进仅需修改模板文本 |
 | **零成本接入** | agent 暴露 OpenAI 兼容 chat completions 端点即可接入（DeepSeek / vLLM / Ollama / 自研），注册表配置即完成；同进程 Python agent 免 HTTP（`InProcessAdapter` 直调本地函数）；不兼容的自建系统仅需实现一个 `_call_llm` 方法 |
 | **配置驱动注册** | `AgentRegistry.from_config(agents.yaml)` 批量注册 N 个 agent——只写"agent 在哪、叫什么模型"，能力 / 并发 / 预算声明由 `info_request` 自动问出；`api_key_env` 从环境变量取密钥 |
-| **CLI 运维入口** | 网关瘦客户端 `ao`（仅标准库 urllib）：提交 DAG / 进度 / 报告 / 指标 / 取消 / 断点恢复 / 人工 resolve / agent 档案，一条命令完成运维与人工出口 |
+| **CLI 运维入口** | 网关瘦客户端 `ao`（仅标准库 urllib）：目标拆解 / 提交 DAG / 进度 / 报告 / 指标 / 取消 / 断点恢复 / 人工 resolve / agent 档案，一条命令完成运维与人工出口 |
 | **资源统计与分配** | 通过 `info_request` 采集 agent 能力 / 资源 / 约束声明入库；三级分配策略：精确匹配 → 能力匹配 → 降级兜底，全程留痕 |
 | **失败处理** | 自动重试 → 失败传播 → 反向可达性剪枝（死任务消除）；并发场景下竞态安全（先冻结派发，再逐级取消，晚到结果丢弃） |
+| **框架侧超时封顶** | 单次尝试超过 `required_resources.timeout` 由框架强制中断（不依赖 agent 履约），agent 挂死不再永久占住并发槽；超时汇入既有重试/剪枝链路 |
 | **并发调度** | asyncio 事件驱动并发派发；per-agent 并发上限与速率配额强制执行；单实例可并发运行多个 DAG，状态隔离 |
 | **治理闭环** | 结果审计（对账 / 分配审计 / 剪枝审计 / 语义交叉校验）+ 成本核算（含失败成本与剪枝沉没成本）+ 自我学习规则提取 |
 | **可观测性** | 结构化日志（key=value）+ 指标聚合，直接供给审计器与学习引擎 |
-| **API 网关** | 框架以系统形态对外服务：提交 DAG / 查询进度 / 获取报告 / 取消运行 / agent 档案快照 |
+| **API 网关** | 框架以系统形态对外服务：目标拆解 / 提交 DAG / 查询进度 / 获取报告 / 取消运行 / agent 档案快照 |
 
 ---
 
@@ -173,7 +175,15 @@ curl -X POST http://localhost:8000/api/runs \
 # 查询进度 / 获取收尾报告
 curl http://localhost:8000/api/runs/{run_id}
 curl http://localhost:8000/api/runs/{run_id}/report
+
+# 一句话目标 → DAG（规划层拆解；submit=true 则拆解后直接提交）
+curl -X POST http://localhost:8000/api/decompose \
+  -H 'Content-Type: application/json' \
+  -d '{"goal": "调研两款降噪耳机的价格并生成对比报告", "submit": true}'
+# → {"goal": "...", "status": "submitted", "dag": {...}, "run_id": "..."}
 ```
+
+> 拆解引擎由 `create_app(..., decomposer=make_default_decomposer())` 注入（默认复用 DeepSeek，key 读 `$DEEPSEEK_API_KEY`）；未注入时该端点返回 400，其余功能不受影响。`ao serve` 会自动装配（`--decompose-model` / `--no-decompose` 可调）。
 
 ### 4.1 断点恢复（进程崩溃后继续）
 
@@ -203,7 +213,9 @@ export AO_GATEWAY=http://127.0.0.1:8000        # 或 -u 指定；默认 localhos
 
 ao serve --config agents.yaml --state-store run.db   # 1) 启动网关（批量注册 + 断点持久化）
 ao agents                                       # 2) 看 agent 档案（能力/并发/预算已采集入库）
-ao submit dag.json --run-id r1                  # 3) 提交 DAG
+ao decompose --goal "调研两款耳机价格并生成对比报告"   # 3) 目标 → DAG（打印 DAG JSON，供审阅/落盘）
+ao decompose --goal "..." --submit              #    或拆解后直接提交（--run-id 可自定义）
+ao submit dag.json --run-id r1                  # 3') 提交已有 DAG
 ao wait r1 --timeout 300                        # 4) 等结束并打印报告
 ao metrics r1                                   # 5) 运行指标（成本/并发峰值/成功率）
 ao resolve r1 t5 --action complete --result '{"task_id":"t5","success":true,"output":{...}}'
@@ -282,6 +294,15 @@ export DEEPSEEK_API_KEY=sk-...
 - 覆盖：三级分配留痕（exact / capability / degraded）、能力不覆盖 risk 标记、解析层杂文兜底重试、任务重试耗尽 → 连续失败摘除 → 降级回退、反向可达剪枝（独立交付分支不误杀）、per-agent 并发上限真实生效（HTTP 并发峰值 ≤ 声明值）、usage 真实回填、审计 / 成本 / 学习
 - mock 支持确定性故障注入（HTTP 500 / 杂文 / 业务失败），独立运行：`.venv/bin/python scripts/mock_agents.py`
 - 可视化报告（DAG 执行全景图 / 三级分配留痕 / 失败传播 / 治理三栏）：`.venv/bin/python scripts/smoke_multiagent.py --visual`，示例报告见 [docs/demo/smoke_multiagent_report.html](docs/demo/smoke_multiagent_report.html)
+
+### 7. 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
+
+```bash
+export DEEPSEEK_API_KEY=sk-...       # 拆解引擎用真实 LLM；agent 侧仍走本地 mock
+.venv/bin/python scripts/smoke_decompose.py
+```
+
+覆盖链路：真实 DeepSeek 拆解目标 → 网关 `POST /api/decompose`（`--submit`）→ mock agents（真实 HTTP）执行 → 报告；CLI 侧直接调 `orchestration.cli.main`（无 mock，真实 HTTP 打到本地网关）。同时验证执行层超时：挂死 agent（30s 才返回）+ 任务声明 `timeout=1` → 框架侧中断、`error.code=timeout`、最终槽位释放（同 agent 仍可派发）。14/14 断言通过。
 
 ---
 
@@ -365,10 +386,12 @@ agents-orchestration/
 │                            #   + deepseek（OpenAI 兼容 HTTP）+ inprocess（免 HTTP）
 ├── scripts/
 │   ├── mock_agents.py        # 本地 OpenAI 兼容 mock agent 服务（多角色 + 故障注入）
+│   ├── mock_agents.py        # 本地 OpenAI 兼容 mock agent 服务（确定性故障注入）
 │   ├── smoke_multiagent.py   # 多 agent 全流程冒烟（真实 HTTP，无需 key）
 │   ├── smoke_deepseek.py     # 真实模型端到端冒烟（需 $DEEPSEEK_API_KEY）
+│   ├── smoke_decompose.py    # 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 232 项测试（解析组件 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
+├── tests/                   # 278 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告
 └── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
@@ -379,7 +402,7 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 232/232 全绿
+pytest        # 278/278 全绿
 ```
 
 测试覆盖重点：解析组件（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）。

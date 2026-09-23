@@ -87,6 +87,67 @@ class TestSubmit:
         assert captured["payload"]["run_id"] == "custom-1"
 
 
+class TestDecompose:
+    """规划层接入（#29）：ao decompose 目标 → DAG（可选 --submit 一并提交）。"""
+
+    DAG_RESP = {
+        "goal": "做一件事", "status": "decomposed", "run_id": None,
+        "dag": {"tasks": {
+            "t1": {"id": "t1", "desc": "第一步"},
+            "t2": {"id": "t2", "desc": "第二步", "deps": ["t1"]},
+        }},
+    }
+
+    def setup_method(self):
+        cli._session["run_id"] = None
+
+    def test_decompose_prints_dag(self, capsys):
+        captured = {}
+
+        def _fake(method, url, payload=None, timeout=15):
+            captured["method"], captured["url"] = method, url
+            captured["payload"], captured["timeout"] = payload, timeout
+            return self.DAG_RESP
+
+        with mock.patch("orchestration.cli._request", side_effect=_fake):
+            rc = cli.main(["decompose", "--goal", "做一件事"])
+
+        assert rc == 0
+        assert captured["payload"] == {"goal": "做一件事", "submit": False}
+        assert captured["url"].endswith("/api/decompose")
+        assert captured["timeout"] >= 60  # 拆解是 LLM 调用，放大超时
+        out = capsys.readouterr().out
+        assert "拆解出 2 个任务" in out
+        assert "t1" in out and "t2" in out and "t1" in out
+        assert "ao submit" in out  # 未提交时提示后续提交方式
+        assert cli._session["run_id"] is None
+
+    def test_decompose_submit_records_run_id(self, capsys):
+        captured = {}
+
+        def _fake(method, url, payload=None, timeout=15):
+            captured["payload"] = payload
+            resp = dict(self.DAG_RESP)
+            resp["run_id"], resp["status"] = "r9", "submitted"
+            return resp
+
+        with mock.patch("orchestration.cli._request", side_effect=_fake):
+            rc = cli.main(["decompose", "--goal", "做一件事", "--submit",
+                           "--run-id", "custom-9"])
+
+        assert rc == 0
+        assert captured["payload"] == {
+            "goal": "做一件事", "submit": True, "run_id": "custom-9"}
+        out = capsys.readouterr().out
+        assert "run_id: r9" in out
+        assert cli._session["run_id"] == "r9"  # 会话记忆（REPL 可省略 run_id）
+
+    def test_decompose_missing_goal_non_interactive(self, capsys):
+        rc = run_cli(["decompose"], {})
+        assert rc == 1
+        assert "缺少 --goal" in capsys.readouterr().err
+
+
 class TestQuery:
     def test_status_table(self, capsys):
         rc = run_cli(["status", "r1"], {"/api/runs/r1": SNAP})
@@ -102,6 +163,22 @@ class TestQuery:
         assert "final_status: success" in out
         assert "总成本" in out
         assert "分配留痕" in out and "exact" in out
+
+    def test_report_prune_root_reason(self, capsys):
+        """剪枝根因打印 task_id + reason（曾读错 key，错误码恒空）。"""
+        report = dict(REPORT)
+        report["prune_reports"] = [{
+            "root_failure": {"task_id": "t1", "reason": "model_error", "retries": 2},
+            "pruned": [{"task_id": "t2", "state_at_cancel": "pending",
+                        "prune_reason": "downstream_chain"}],
+            "pruned_final": False,
+        }]
+        rc = run_cli(["report", "r1"], {"/api/runs/r1/report": report})
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "根失败 t1（model_error）" in out
+        assert "剪枝 1 个任务" in out
+        assert "（）" not in out
 
     def test_metrics_output(self, capsys):
         rc = run_cli(["metrics", "r1"], {"/api/runs/r1/metrics": METRICS})
