@@ -1,125 +1,47 @@
-"""Agent 注册表 + 资源统计 + 任务分配（架构 §3.2 规划/调度层；阶段三）。
+"""Agent 注册表——**组合门面**（架构 §3.2 规划层 × 调度层；阶段三起公开 API）。
 
-核心设计（对话共识）：**能力是"问"出来的，不是配出来的**。
-- 注册表只登记 agent 实例的存在（agent_id + model + adapter 引用）
-- 能力 / 资源 / 约束通过 info_request 采集（协议 §4.2 scope=capability/
-  resource/constraint），解析为结构化声明入库，可刷新
-- 任务分配三级策略，全程留痕（Assignment）：
-  1. exact      —— task.model 精确匹配（同 model 多实例轮询）
-  2. capability —— 无 exact 时按能力标签匹配（部分覆盖标记风险）
-  3. degraded   —— 无匹配降级到默认通用 LLM（显式留痕，不静默消化）
-- 多 agent 资源协调：连续失败达到阈值自动摘除（unavailable），不再参与分配
+层间切分（本次详细设计落地）：
+- **规划层「资源统计器」** = `agent_pool.AgentPool`
+  注册登记 / info_request 采集 / 声明解析入库 / 刷新（TTL + 决策点校验）/ 画像查询
+- **调度层「资源协调器」** = `allocator.Allocator`
+  三级分配（exact → capability → degraded）/ 多实例轮询 / 连续失败摘除
+
+`AgentRegistry` 只是把两者组装起来并**零逻辑转发**（组合根），保持阶段三以来的
+公开 API 不变——调度器 / 网关 / CLI / 审计 / 成本核算均按此接口调用，无需改动。
+需要哪一半能力，也可直接依赖 `AgentPool` / `Allocator`。
+
+核心设计不变：**能力是"问"出来的，不是配出来的**——配置只写接入三要素
+（base_url / model / api_key），能力 / 限制仍由 info_request 采集。
 """
 from __future__ import annotations
 
-import re
-import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Callable, Optional, Union
 
-
 from .adapters.base import AgentAdapter
-from .models import Assignment, Task
+from .agent_pool import (  # noqa: F401 (对外 re-export)
+    INFO_QUESTIONS,
+    VOLATILE_SCOPES,
+    AgentPool,
+    RegisteredAgent,
+    RegistryError,
+)
+from .allocator import Allocator
+from .models import Assignment  # noqa: F401 (对外 re-export)
 
-# ---------------------------------------------------------------------------
-# 采集问题集（协议 §4.2：info_request 的 questions）
-# ---------------------------------------------------------------------------
+__all__ = [
+    "AgentRegistry",
+    "AgentPool",
+    "Allocator",
+    "RegisteredAgent",
+    "RegistryError",
+    "INFO_QUESTIONS",
+    "VOLATILE_SCOPES",
+    "Assignment",
+]
 
-INFO_QUESTIONS: dict[str, list[str]] = {
-    "capability": [
-        "你具备哪些能力？用逗号分隔的能力标签回答（如 code_review, data_analysis, report_writing）",
-        "你最擅长处理哪类任务？一句话描述",
-    ],
-    "resource": [
-        "你的最大并发任务数是多少？只回答数字",
-        "每分钟最多能处理多少个请求？只回答数字，未知填 0",
-        "单个任务的预算上限是多少美元？只回答数字，未知填 0",
-    ],
-    "constraint": [
-        "你有哪些功能限制？如禁止事项，用分号分隔；没有则回答 无",
-        "你支持哪些语言？用逗号分隔",
-    ],
-}
-
-# 派发决策真正依赖、且易变的声明维度（决策点校验只复核这两类）：
-# 能力标签（capability）变化慢，交给池级 TTL 即可
-VOLATILE_SCOPES: tuple[str, ...] = ("resource", "constraint")
-
-
-# ---------------------------------------------------------------------------
-# 注册表数据结构
-# ---------------------------------------------------------------------------
-
-@dataclass
-class RegisteredAgent:
-    """一个 agent 实例的完整档案。adapter 是运行时对象，故用 dataclass 而非 pydantic。"""
-    agent_id: str
-    model: str
-    adapter: AgentAdapter
-    # 能力声明（info_request capability scope 采集）
-    capabilities: list[str] = field(default_factory=list)
-    description: str = ""
-    # 资源声明（resource scope）
-    max_concurrency: int = 1
-    rate_limit_per_min: int = 0
-    budget_limit_usd: float = 0.0
-    # 约束声明（constraint scope）——功能限制
-    forbidden: list[str] = field(default_factory=list)
-    languages: list[str] = field(default_factory=list)
-    # 运行时状态（调度器维护）
-    status: str = "available"  # available | unavailable
-    consecutive_failures: int = 0
-    last_collected_at: Optional[str] = None
-
-    @property
-    def available(self) -> bool:
-        return self.status == "available"
-
-
-class RegistryError(Exception):
-    """注册表异常：无可用 agent / 采集失败等。"""
-
-
-def _split_tags(text: str) -> list[str]:
-    """把逗号/分号/顿号分隔的标签文本切成干净列表。"""
-    tags = re.split(r"[,;，；、\n]+", text or "")
-    return [t.strip() for t in tags if t.strip()]
-
-
-def _looks_like_time_window(tag: str) -> bool:
-    """识别时间窗描述（如"工作时间 9点~18点"）。
-
-    时间窗字段（原 `time_windows`）已废弃——采集但无消费方，故删除。
-    此判定仅用于把误入 constraint q1 的时间窗文本从 forbidden 中剔除，
-    避免污染约束匹配/审计/学习规则的输入口径。
-    """
-    t = (tag or "").lower()
-    return "~" in t or "点" in t or "window" in t or "时间窗" in t
-
-
-def _first_number(text: str) -> float:
-    """从文本提取第一个数字（容错：agent 可能回答"5 个"）。"""
-    m = re.search(r"\d+(?:\.\d+)?", text or "")
-    return float(m.group()) if m else 0.0
-
-
-def _parse_ts(s: Optional[str]) -> Optional[float]:
-    """ISO 时间戳字符串 → epoch 秒（无法解析返回 None）。"""
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s).timestamp()
-    except ValueError:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# 注册表
-# ---------------------------------------------------------------------------
 
 class AgentRegistry:
-    """agent 档案库：注册 → 采集 → 分配 → 摘除。
+    """agent 档案库门面：注册 → 采集 → 分配 → 摘除（= AgentPool + Allocator）。
 
     default_agent_id：降级目标（通用 LLM），注册时第一个注册的可用 agent。
 
@@ -137,344 +59,125 @@ class AgentRegistry:
         collect_ttl_seconds: float = 300.0,
         validate_on_dispatch: bool = True,
     ):
-        self._agents: dict[str, RegisteredAgent] = {}
-        self._rr_counter: dict[str, int] = {}  # model → 轮询游标
-        self._default_id: Optional[str] = None
-        self.max_consecutive_failures = max_consecutive_failures
-        self.collect_ttl_seconds = collect_ttl_seconds
-        self.validate_on_dispatch = validate_on_dispatch
+        self._pool = AgentPool(
+            collect_ttl_seconds=collect_ttl_seconds,
+            validate_on_dispatch=validate_on_dispatch,
+        )
+        self._allocator = Allocator(
+            self._pool, max_consecutive_failures=max_consecutive_failures
+        )
 
-    # ---------- 注册 ----------
+    # ---------- 门面属性（层内实例可直达） ----------
+
+    @property
+    def pool(self) -> AgentPool:
+        """规划层「资源统计器」实例。"""
+        return self._pool
+
+    @property
+    def allocator(self) -> Allocator:
+        """调度层「资源协调器」实例。"""
+        return self._allocator
+
+    @property
+    def max_consecutive_failures(self) -> int:
+        return self._allocator.max_consecutive_failures
+
+    @max_consecutive_failures.setter
+    def max_consecutive_failures(self, value: int) -> None:
+        self._allocator.max_consecutive_failures = value
+
+    @property
+    def collect_ttl_seconds(self) -> float:
+        return self._pool.collect_ttl_seconds
+
+    @collect_ttl_seconds.setter
+    def collect_ttl_seconds(self, value: float) -> None:
+        self._pool.collect_ttl_seconds = value
+
+    @property
+    def validate_on_dispatch(self) -> bool:
+        return self._pool.validate_on_dispatch
+
+    @validate_on_dispatch.setter
+    def validate_on_dispatch(self, value: bool) -> None:
+        self._pool.validate_on_dispatch = value
+
+    @property
+    def _agents(self) -> dict[str, RegisteredAgent]:
+        return self._pool.agents
+
+    @property
+    def _default_id(self) -> Optional[str]:
+        return self._pool.default_id
+
+    @_default_id.setter
+    def _default_id(self, value: Optional[str]) -> None:
+        self._pool._default_id = value
+
+    # ---------- 规划层：注册 / 采集 / 刷新 / 画像 ----------
 
     def register(
         self,
         adapter: AgentAdapter,
         agent_id: Optional[str] = None,
     ) -> str:
-        """登记一个 agent 实例。agent_id 缺省自动生成 agent_XXX。"""
-        if agent_id is None:
-            agent_id = f"agent_{len(self._agents) + 1:03d}"
-        if agent_id in self._agents:
-            raise RegistryError(f"agent_id 已存在：{agent_id}")
-        self._agents[agent_id] = RegisteredAgent(
-            agent_id=agent_id,
-            model=adapter.model,
-            adapter=adapter,
-        )
-        if self._default_id is None:
-            self._default_id = agent_id  # 第一个注册的作为默认降级目标
-        return agent_id
+        return self._pool.register(adapter, agent_id=agent_id)
 
     def register_default(self, agent_id: str) -> None:
-        """显式指定降级目标（通用 LLM）。"""
-        if agent_id not in self._agents:
-            raise RegistryError(f"未注册的 agent：{agent_id}")
-        self._default_id = agent_id
-
-    # ---------- 采集（info_request → 结构化声明入库） ----------
+        self._pool.register_default(agent_id)
 
     def collect(
         self,
         agent_id: Optional[str] = None,
         scope: Optional[str] = None,
     ) -> list[dict]:
-        """采集 agent 声明并入库。scope=None 采集全部三类。
-
-        返回采集摘要列表（审计/可观测用）；单次失败不中断整体。
-        """
-        targets = [
-            a for a in self._agents.values()
-            if agent_id is None or a.agent_id == agent_id
-        ]
-        scopes = [scope] if scope else list(INFO_QUESTIONS)
-
-        summary: list[dict] = []
-        for agent in targets:
-            for sc in scopes:
-                entry = self._collect_one(agent, sc)
-                summary.append(entry)
-        return summary
-
-    def _collect_one(self, agent: RegisteredAgent, scope: str) -> dict:
-        """对单个 agent 发一次 info_request 并解析入库。"""
-        request_id = f"info:{agent.agent_id}:{scope}:{_ts()}"
-        try:
-            result = agent.adapter.run_info(
-                scope=scope,
-                questions=INFO_QUESTIONS[scope],
-                request_id=request_id,
-            )
-            if not result.success:
-                raise RegistryError(
-                    result.error.code if result.error else "info 请求失败"
-                )
-            self._apply_declaration(agent, scope, result.output)
-            agent.last_collected_at = _ts()
-            return {
-                "agent_id": agent.agent_id,
-                "scope": scope,
-                "ok": True,
-                "output": result.output,
-            }
-        except Exception as e:  # 适配器异常 / 解析失败 → 单点失败不中断
-            return {
-                "agent_id": agent.agent_id,
-                "scope": scope,
-                "ok": False,
-                "error": str(e),
-            }
-
-    async def _acollect_one(self, agent: RegisteredAgent, scope: str) -> dict:
-        """异步版单 agent 采集（AsyncScheduler 决策点校验用，不阻塞事件循环）。"""
-        request_id = f"info:{agent.agent_id}:{scope}:{_ts()}"
-        try:
-            result = await agent.adapter.arun_info(
-                scope=scope,
-                questions=INFO_QUESTIONS[scope],
-                request_id=request_id,
-            )
-            if not result.success:
-                raise RegistryError(
-                    result.error.code if result.error else "info 请求失败"
-                )
-            self._apply_declaration(agent, scope, result.output)
-            agent.last_collected_at = _ts()
-            return {
-                "agent_id": agent.agent_id,
-                "scope": scope,
-                "ok": True,
-                "output": result.output,
-            }
-        except Exception as e:  # 单点失败隔离：保留上次已知值，不中断整体
-            return {
-                "agent_id": agent.agent_id,
-                "scope": scope,
-                "ok": False,
-                "error": str(e),
-            }
-
-    # ---------- 刷新（TTL 惰性刷新 + 决策点校验） ----------
+        return self._pool.collect(agent_id=agent_id, scope=scope)
 
     def is_stale(self, agent: RegisteredAgent) -> bool:
-        """画像是否超过 TTL（从未采集过视为过期）。"""
-        ts = _parse_ts(agent.last_collected_at)
-        if ts is None:
-            return True
-        return (time.time() - ts) >= self.collect_ttl_seconds
+        return self._pool.is_stale(agent)
 
     def ensure_fresh(self, agent_id: Optional[str] = None) -> list[dict]:
-        """池级 TTL 惰性刷新：仅对过期 agent 重新采集（新鲜则零网络开销）。
-
-        在"读"数据时调用（如池级匹配前），保证三级分配看到的池级画像不陈旧。
-        """
-        targets = [
-            a for a in self._agents.values()
-            if agent_id is None or a.agent_id == agent_id
-        ]
-        return [
-            self._collect_one(a, sc)
-            for a in targets if self.is_stale(a)
-            for sc in INFO_QUESTIONS
-        ]
+        return self._pool.ensure_fresh(agent_id=agent_id)
 
     async def aensure_fresh(self, agent_id: Optional[str] = None) -> list[dict]:
-        """异步版池级 TTL 刷新（AsyncScheduler 在 run 开始时调用）。"""
-        targets = [
-            a for a in self._agents.values()
-            if agent_id is None or a.agent_id == agent_id
-        ]
-        out: list[dict] = []
-        for a in targets:
-            if not self.is_stale(a):
-                continue
-            for sc in INFO_QUESTIONS:
-                out.append(await self._acollect_one(a, sc))
-        return out
+        return await self._pool.aensure_fresh(agent_id=agent_id)
 
     def validate_before_dispatch(self, agent_id: str) -> list[dict]:
-        """决策点校验（同步）：派发前复核选中目标 agent 的易变维度。
-
-        只问 resource/constraint（派发决策真正依赖、且易变）；capability
-        变化慢且信息量大，交给池级 TTL。失败不阻塞派发——保留上次已知值。
-        """
-        if not self.validate_on_dispatch:
-            return []
-        agent = self._agents[agent_id]
-        return [self._collect_one(agent, sc) for sc in VOLATILE_SCOPES]
+        return self._pool.validate_before_dispatch(agent_id)
 
     async def avalidate_before_dispatch(self, agent_id: str) -> list[dict]:
-        """决策点校验（异步）：AsyncScheduler 派发前调用，不阻塞事件循环。"""
-        if not self.validate_on_dispatch:
-            return []
-        agent = self._agents[agent_id]
-        return [await self._acollect_one(agent, sc) for sc in VOLATILE_SCOPES]
-
-    def _apply_declaration(
-        self,
-        agent: RegisteredAgent,
-        scope: str,
-        output: object,
-    ) -> None:
-        """把 info 响应的 output 解析为结构化字段（容错：宽松解析）。"""
-        if isinstance(output, dict):
-            answers = output
-        elif isinstance(output, str):
-            answers = {"q1": output}  # 兜底：整段当能力描述
-        else:
-            answers = {}
-
-        def q(i: int) -> str:
-            v = answers.get(f"q{i}") or answers.get(f"question_{i}") or ""
-            return v if isinstance(v, str) else str(v)
-
-        if scope == "capability":
-            agent.capabilities = _split_tags(q(1))
-            agent.description = q(2)
-        elif scope == "resource":
-            agent.max_concurrency = max(1, int(_first_number(q(1))))
-            agent.rate_limit_per_min = int(_first_number(q(2)))
-            agent.budget_limit_usd = _first_number(q(3))
-        elif scope == "constraint":
-            # q1 为自由文本（如"禁止访问外网；输出必须是JSON"）：逐标签入库；
-            # "无"（含空白变体）与空回答不计入。时间窗字段已废弃（无消费方，
-            # 见 _looks_like_time_window），误入的时间窗文本在此剔除——forbidden
-            # 是约束匹配/审计/学习规则的输入，混入时间窗会污染判定口径
-            agent.forbidden = [
-                t for t in _split_tags(q(1))
-                if t != "无" and not _looks_like_time_window(t)
-            ]
-            agent.languages = _split_tags(q(2))
-
-    # ---------- 分配（三级策略 + 多实例轮询） ----------
-
-    def assign(self, task: Task) -> tuple[Assignment, AgentAdapter]:
-        """为任务分配 agent。
-
-        1. exact：task.model 精确匹配（available 实例，同 model 轮询）
-        2. capability：按 required_capabilities 匹配（部分覆盖标记 risk）
-        3. degraded：降级默认通用 LLM（显式留痕）
-        """
-        model = task.required_resources.model
-        req_caps = [c for c in (task.required_capabilities or []) if c]
-
-        # 1. 精确 model 匹配
-        pool = [
-            a for a in self._agents.values()
-            if a.model == model and a.available
-        ]
-        if pool:
-            agent = self._round_robin(pool, model)
-            # 能力声明未覆盖任务需求 → 标记风险（审计重点盯），但不降级
-            risk = bool(req_caps) and not (set(req_caps) & set(agent.capabilities))
-            return (
-                Assignment(
-                    task_id=task.id,
-                    agent_id=agent.agent_id,
-                    match_type="exact",
-                    risk=risk,
-                    reason=(
-                        f"能力声明未覆盖需求 {req_caps}" if risk
-                        else f"覆盖能力：{sorted(set(req_caps) & set(agent.capabilities))}"
-                    ),
-                ),
-                agent.adapter,
-            )
-
-        # 2. 能力匹配：需求覆盖最多的 available agent
-        if req_caps:
-            best: Optional[RegisteredAgent] = None
-            best_cover = 0
-            for a in self._agents.values():
-                if not a.available:
-                    continue
-                cover = len(set(req_caps) & set(a.capabilities))
-                if cover > best_cover:
-                    best, best_cover = a, cover
-            if best is not None and best_cover > 0:
-                partial = best_cover < len(set(req_caps))
-                return (
-                    Assignment(
-                        task_id=task.id,
-                        agent_id=best.agent_id,
-                        match_type="capability",
-                        risk=partial,
-                        reason=(
-                            f"能力覆盖 {best_cover}/{len(set(req_caps))}：{sorted(set(req_caps) & set(best.capabilities))}"
-                            + ("（部分覆盖）" if partial else "")
-                        ),
-                    ),
-                    best.adapter,
-                )
-
-        # 3. 降级：默认通用 LLM 优先；默认不可用则任意可用 agent 兜底
-        #    （默认 agent 被摘除不应导致系统瘫痪）；全部不可用才抛错
-        fallback: Optional[RegisteredAgent] = None
-        if self._default_id is not None:
-            d = self._agents.get(self._default_id)
-            if d is not None and d.available:
-                fallback = d
-        if fallback is None:
-            fallback = next(
-                (a for a in self._agents.values() if a.available), None
-            )
-        if fallback is None:
-            raise RegistryError(
-                f"任务 {task.id} 无任何可用 agent："
-                f"model={model}, caps={req_caps}"
-            )
-        return (
-            Assignment(
-                task_id=task.id,
-                agent_id=fallback.agent_id,
-                match_type="degraded",
-                risk=False,
-                reason=f"无匹配 agent（model={model}, caps={req_caps}），降级默认",
-            ),
-            fallback.adapter,
-        )
-
-    def _round_robin(self, pool: list[RegisteredAgent], model: str) -> RegisteredAgent:
-        """同 model 多实例轮询分流（多 agent 资源协调）。"""
-        idx = self._rr_counter.get(model, 0)
-        agent = pool[idx % len(pool)]
-        self._rr_counter[model] = idx + 1
-        return agent
-
-    # ---------- 状态维护（故障摘除 / 恢复） ----------
-
-    def record_success(self, agent_id: str) -> None:
-        agent = self._agents[agent_id]
-        agent.consecutive_failures = 0
-
-    def record_failure(self, agent_id: str) -> None:
-        """连续失败达到阈值自动摘除（best-effort，调度器每次执行后调用）。"""
-        agent = self._agents[agent_id]
-        agent.consecutive_failures += 1
-        if agent.consecutive_failures >= self.max_consecutive_failures:
-            agent.status = "unavailable"
-
-    def mark_unavailable(self, agent_id: str) -> None:
-        self._agents[agent_id].status = "unavailable"
-
-    def mark_available(self, agent_id: str) -> None:
-        agent = self._agents[agent_id]
-        agent.status = "available"
-        agent.consecutive_failures = 0
-
-    # ---------- 查询 ----------
+        return await self._pool.avalidate_before_dispatch(agent_id)
 
     def get(self, agent_id: str) -> RegisteredAgent:
-        return self._agents[agent_id]
+        return self._pool.get(agent_id)
 
     def get_adapter(self, agent_id: str) -> AgentAdapter:
-        return self._agents[agent_id].adapter
+        return self._pool.get_adapter(agent_id)
 
     @property
     def agents(self) -> dict[str, RegisteredAgent]:
-        return self._agents
+        return self._pool.agents
 
     def available_agents(self) -> list[RegisteredAgent]:
-        return [a for a in self._agents.values() if a.available]
+        return self._pool.available_agents()
+
+    # ---------- 调度层：分配 / 健康度 ----------
+
+    def assign(self, task) -> tuple[Assignment, AgentAdapter]:
+        return self._allocator.assign(task)
+
+    def record_success(self, agent_id: str) -> None:
+        self._allocator.record_success(agent_id)
+
+    def record_failure(self, agent_id: str) -> None:
+        self._allocator.record_failure(agent_id)
+
+    def mark_unavailable(self, agent_id: str) -> None:
+        self._allocator.mark_unavailable(agent_id)
+
+    def mark_available(self, agent_id: str) -> None:
+        self._allocator.mark_available(agent_id)
 
     # ---------- 配置驱动批量注册（N 个 agent 的场景） ----------
 
@@ -568,7 +271,3 @@ class AgentRegistry:
             api_key=api_key,
             template_mode=entry.get("template_mode", "full"),
         )
-
-
-def _ts() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")

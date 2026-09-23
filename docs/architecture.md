@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-08-15
-> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固 + 规划层接入，278/278 测试全绿）
+> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固 + 规划层接入 + 规划层切分（依赖分析独立 / 注册表分层），310/310 测试全绿）
 
 ---
 
@@ -94,9 +94,9 @@ flowchart TB
 | 模块 | 职责 | 关键输入 → 输出 |
 |---|---|---|
 | 任务拆解引擎 | LLM 将目标拆解为子任务 + 依赖 DAG；接入形态 = 网关 `POST /api/decompose` + CLI `ao decompose`（`--submit` 目标→DAG→提交一条链）；重试口径同协议 §7.3（失败原因 + 正确示例） | 目标 → `DAG{Task[]}` |
-| 资源统计器 | info_request 采集 agent 能力 / 资源 / 约束声明（阶段三 `AgentRegistry`）；刷新策略 = **TTL 惰性刷新 + 决策点校验**——池级 `ensure_fresh()` 读时过期即刷，派发前 `validate_before_dispatch()` 对选中 agent 复核易变维度（resource/constraint） | agent 池 → `AgentProfile[]` |
-| 依赖分析 | 标注数据流依赖（A 的结果是 B 的输入） | `DAG` → `DependencyGraph` |
-| 资源协调器 | 在多个可用 agent / 模型间分配资源，防超配 | `ResourcePlan` + agent 池 → `Allocation` |
+| 资源统计器 | info_request 采集 agent 能力 / 资源 / 约束声明（阶段三；实现 = `agent_pool.AgentPool`）；注册记录口径 = **agent / 能力 / 限制（功能 + 性能）**——constraint → 功能限制（forbidden/languages）、resource → 性能限制（并发/限速/预算），合规限制归后期安全层；刷新策略 = **TTL 惰性刷新 + 决策点校验**——池级 `ensure_fresh()` 读时过期即刷，派发前 `validate_before_dispatch()` 对选中 agent 复核易变维度（resource/constraint） | agent 池 → `AgentProfile[]` |
+| 依赖分析 | 数据流依赖的独立结构视图（实现 = `dependency.DependencyGraph`）：引用合法性 / 无环 / 拓扑序 / **拓扑分层（并行前沿）** / 可达性与反向可达（剪枝判据）/ 交付点。**纯结构、不持有运行时状态**（status 归调度层）；DAG 保留同名方法作薄委托（调用点零改动） | `DAG` → `DependencyGraph` |
+| 资源协调器 | 三级分配（exact → capability → degraded，全程留痕）+ 多实例轮询 + 连续失败摘除（实现 = `allocator.Allocator`）；**只读画像不采集**——采数据是规划层资源统计器的职责 | `ResourcePlan` + agent 池 → `Allocation` |
 | DAG 调度器 | 按拓扑序派发任务，传递结果，管理取消 | `Allocation` + 结果流 → 派发/取消指令 |
 | 失败处理器 | 重试 → 失败传播 → 死任务剪枝 → 统一反馈 | 失败事件 → 剪枝集合 + 取消报告 |
 | Agent 适配器 | 对接任意 agent（DeepSeek / Claude / 自建，默认 OpenAI 兼容 HTTP 端点，见 §3.3）：装配协议提示词（模板 + 请求 JSON）+ 解析响应，实现取消契约与结果契约 | 任务 → 提示词请求 → `Result` |
@@ -311,6 +311,7 @@ flowchart LR
 - [x] **一致性收尾补遗：constraint 分流 + 运行中快照 agent**（2026-09-07 完成）— ①constraint 采集分流（registry.py）：q1 为混合自由文本（如"工作时间 9点~18点；禁止访问外网"），原实现整段扫入 forbidden——时间窗短语污染约束匹配/审计/学习规则的输入口径；现按 `_is_time_window`（~/点/window/时间窗）分流归 time_windows，"无"（含空白变体）不计入任何一方（回归：test_registry.py::TestCollect 两项）；②网关运行中快照 agent 字段（gateway.py + scheduler_async.py）：原 `_task_agent` 依赖 ScheduleReport（仅收尾后生成），运行中/RUNNING 快照 tasks[].agent 恒空串；现 AsyncScheduler 托管 live 分配映射（run 注册/_run_loop finally 注销，异常路径不留幽灵状态），新增 `task_agents(run_id)` 查询，网关运行中从 live 映射读取——任务派发即有归属（回归：test_gateway.py::test_running_snapshot_has_agent）。测试 224/224 全绿，见 §10
 - [x] **规划层定标①：删除 time_windows + 资源池刷新策略落地**（2026-09-23 完成）— 对话裁定：①`time_windows` 字段**删除**（采集但无任何消费方，属悬空声明；约束口径收敛为功能限制 `forbidden` + `languages`，时间窗文本由 `_looks_like_time_window` 从 forbidden 中剔除——不重蹈 09-07 前污染覆辙）；②资源池刷新 = **TTL 惰性刷新 + 决策点校验**：`RegisteredAgent.last_collected_at` + `collect_ttl_seconds`（默认 300s）判过期；池级 `ensure_fresh()` 在读时对过期 agent 重采（新鲜零开销，`AsyncScheduler.run` 起点调用）——保证三级分配看到的池级画像不陈旧；决策点 `validate_before_dispatch()` 在**派发前**对选中的目标 agent 复核易变维度 `VOLATILE_SCOPES`（resource/constraint，capability 变化慢交给池级 TTL），失败保留上次已知值不阻塞派发（同步/异步双路径，同步 `Scheduler` 与 `AsyncScheduler` 均已接线；`validate_on_dispatch` 可关）。约束采集问题 q1 同步改为"功能限制"措辞。回归：test_registry.py::TestRefresh 六项 + test_scheduler_async.py::TestRefreshWiring 两项（接线：池级 3 类各一次 + 决策点 resource/constraint；新鲜 skip 验证）。测试 232/232 全绿，见 §10
 - [x] **规划层详细设计：拆解接入（#29）+ 拆解引擎测试与修正重试（#30）+ 执行层 wall-clock 超时（#34）**（2026-09-23 完成）— ①**拆解接入**（gateway.py / cli.py / decomposer.py）：规划层头部"目标 → DAG"原本只在库中可用（`POST /api/runs` 入参已是 DAG、`ao submit` 只收 JSON 或引导式建 DAG），对使用方断链——新增 `POST /api/decompose`（body `{goal, submit, run_id}`；`submit=true` 拆解后直接提交并返回 run_id，"目标 → 结果"一条链）与 CLI `ao decompose --goal '...' [--submit] [--run-id]`（不带 `--submit` 打印 DAG JSON 供审阅/落盘）；`create_app(..., decomposer=)` 注入拆解引擎，`make_default_decomposer()` 复用 `DeepSeekAdapter.chat` 的裸聊天入口（同一套端点/鉴权，key 读 `$DEEPSEEK_API_KEY`），缺失时端点返回 400 而框架其余功能不受影响；`ao serve` 自动装配（`--decompose-model` / `--no-decompose` 可调）；分解是同步 LLM 调用（框架内部组件，**不走消息协议**），经 `asyncio.to_thread` 执行不阻塞事件循环，`DecomposeError` → HTTP 422。②**拆解引擎测试与重试口径**（decomposer.py / adapters/deepseek.py）：拆解重试原样重放同一提示词，与解析组件（§7.3）口径不一致——改为把"失败原因 + 正确拆解示例"追加进提示词再试（`DECOMPOSITION_EXAMPLE`，"给示例比给指令稳一个量级"）；构造参数 `temperature` 原为死参数（从未传给 `llm_call`）——现按调用方签名内省注入（`_accepts_kwarg`），`DeepSeekAdapter.chat/achat` 增加 `temperature` 覆盖参数；新增 `tests/test_decomposer.py` 28 项（Schema 七关逐关断言 + 修正提示重试 + temperature 注入/跳过 + 默认引擎接线 + 重试耗尽），其中"至少一个 final"关为无环非空图的不可达防守分支，以 monkeypatch 覆盖。③**执行层 wall-clock 超时**（scheduler_async.py / scheduler.py / models.py）：`required_resources.timeout`（默认 300）原仅拼进请求载荷——是声明给 agent 的建议值，框架侧无消费方，agent 挂死时并发槽被永久占用、run 停在 running 空转；现单次尝试超过该值即由框架强制中断：异步 `asyncio.wait_for`（取消内层协程 → 槽随 `async with sem` 释放）、同步 daemon 线程 join（不阻塞解释器退出），产出 `Result(success=False, error.code=timeout)` 汇入既有重试/剪枝链路；`<=0` 关闭。回归：test_decomposer.py 28 项 + test_gateway.py::TestDecompose 七项 + test_scheduler_async.py::TestFrameworkTimeout 四项 + test_scheduler.py::TestFrameworkTimeout 三项 + test_cli.py::TestDecompose 三项；顺带修复 CLI 剪枝根因打印恒空（读错 key `error.code` → `reason`，回归：test_cli.py::test_report_prune_root_reason）。冒烟：新增 `scripts/smoke_decompose.py`（真实 DeepSeek 拆解 + mock agents 真实 HTTP 执行 + 真实 CLI 调网关；14/14 断言通过，含超时与槽位释放验证）。测试 278/278 全绿，见 §10
+- [x] **规划层详细设计②：依赖分析独立成型 + 注册表按层切分**（2026-09-23 完成）— ①**依赖分析独立**（新增 `orchestration/dependency.py`）：架构 §3.2 声明的「依赖分析（`DAG` → `DependencyGraph`）」此前**事实上为空**——图算法分散内联在拆解引擎（Kahn 环检测）与 DAG 模型（可达性）里，`DependencyGraph` 类型不存在。现收敛为独立模块：`descendants` / `final_tasks` / `reverse_reachable` / `unreachable_from` / `roots` / `children` / `parents` 邻接查询、`topological_order`（并列节点按插入序，确定性）/ `levels`（**拓扑分层 = 并行前沿**）/ `max_parallel_width`、`has_cycle` / `validate_edges` / `validate`（引用存在 → 无环 → 至少一个交付点）；`DependencyError` 继承 `ValueError`，沿用调用方既有兜底捕获口径。**纯结构视图**——不读 `Task.status`（运行时状态归调度层），与文档「数据流依赖，非运行时状态」一致；`DAG` 保留同名方法作**薄委托**（调用点与既有测试零改动）。拆解引擎的引用存在/无环校验改为 `DependencyGraph.validate()`（内联 Kahn 删除）；`POST /api/decompose` 响应新增 `analysis`（`task_count` / `levels` / `depth` / `max_parallel_width` / `roots` / `final_tasks`），使规划层这一环真正输出产物。②**注册表按层切分**（新增 `orchestration/agent_pool.py` + `orchestration/allocator.py`，`registry.py` 收敛为组合门面）：原 `registry.py` 同时承载规划层职责（注册 / info_request 采集 / 声明解析 / TTL 刷新 / 画像查询）与调度层职责（三级分配 / 轮询 / 连续失败摘除），跨层未切——现按六层架构物理分离：规划层「资源统计器」= `AgentPool`，调度层「资源协调器」= `Allocator`（**只读画像不采集**），`AgentRegistry` 仅做**零逻辑转发**并保持阶段三以来的公开 API 不变（调度器 / 网关 / CLI / 审计 / 成本核算零改动），旧导入路径（`AgentRegistry` / `RegisteredAgent` / `RegistryError` / `INFO_QUESTIONS` / `Assignment`）全部保持可用；门面另暴露 `pool` / `allocator` 直达层内实例。回归：新增 `tests/test_dependency.py` 23 项（邻接结构 / 可达性 / 拓扑与分层 / 成环与自环 / 引用校验 / 空图边界 / `DependencyError` 继承 / DAG 薄委托一致性）+ `tests/test_registry.py::TestLayerSplit` 9 项（池不含分配、协调器不含采集、门面双层直通、注册与分配转发、摘除写同一档案对象、`Allocator` 可独立依赖裸 `AgentPool`、旧导入路径兼容）+ `test_gateway.py` 补 `analysis` 断言（`test_decomposer.py` 的 final 关 monkeypatch 目标随判定迁移到 `DependencyGraph`）。测试 310/310 全绿，见 §10
 
 ---
 
@@ -350,11 +351,14 @@ agentsOrchestration/
 │   ├── smoke_decompose.py      # 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
 │   └── smoke_resume.py         # 断点恢复冒烟：崩溃 → 恢复 → 续跑（§5.5）
 ├── orchestration/           # 主包
-│   ├── models.py            # Task / Result / Assignment / DAG（含图算法）/ ScheduleReport
+│   ├── models.py            # Task / Result / Assignment / DAG（调度期状态操作）/ ScheduleReport
+│   ├── dependency.py        # 依赖分析（规划层）：DAG → DependencyGraph（拓扑/并行前沿/可达/校验）
+│   ├── agent_pool.py        # 资源统计器（规划层）：注册 / info_request 采集 / 声明解析 / TTL+决策点刷新
+│   ├── allocator.py         # 资源协调器（调度层）：三级分配 / 多实例轮询 / 连续失败摘除
 │   ├── protocol.py          # PROTOCOL_PROMPT 模板（完整/简化版）+ 请求构造 + 渲染
 │   ├── validation.py        # 双层校验：提取 → Schema 校验 → 解析重试（同步/异步）
 │   ├── decomposer.py        # 任务拆解：LLM 生成 DAG + 拆解 Schema 校验
-│   ├── registry.py          # Agent 注册表：采集（TTL+决策点刷新）/ 分配 / 摘除（阶段三）
+│   ├── registry.py          # Agent 注册表门面：组合 AgentPool（规划层）+ Allocator（调度层），零逻辑转发
 │   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘，§5.5）
 │   ├── scheduler.py         # 同步调度器：拓扑派发 + 任务分配 + 失败传播 + 剪枝
 │   ├── scheduler_async.py   # 异步并发调度器：并发派发 + 竞态处理 + 资源限制（阶段四）
@@ -374,7 +378,8 @@ agentsOrchestration/
     ├── test_decomposer.py    # 拆解引擎：Schema 七关 / 修正重试 / temperature 接线
     ├── test_scheduler.py
     ├── test_scheduler_async.py # 并发调度 / 竞态 / 资源限制（阶段四）
-    ├── test_registry.py
+    ├── test_registry.py      # 注册表（采集/分配/刷新 + 层职责切分 AgentPool × Allocator）
+    ├── test_dependency.py    # 依赖分析：结构/可达/拓扑分层/校验/空图 + DAG 薄委托一致性
     ├── test_protocol.py
     ├── test_audit.py          # 审计器（阶段二）
     ├── test_cost.py           # 成本核算（阶段二）

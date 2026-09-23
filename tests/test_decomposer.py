@@ -17,6 +17,7 @@ from orchestration.decomposer import (
     Decomposer,
     make_default_decomposer,
 )
+from orchestration.dependency import DependencyGraph
 from orchestration.models import DAG, SideEffects
 
 
@@ -148,8 +149,12 @@ class TestSchemaGates:
 
     def test_final_task_gate(self, monkeypatch):
         """「至少一个出度 0 的任务」关：无环非空图必有 sink，正常路径不可达，
-        故 monkeypatch 强制 final_tasks() 为空以覆盖该防守分支。"""
-        monkeypatch.setattr(DAG, "final_tasks", lambda self: set())
+        故 monkeypatch 强制 final_tasks() 为空以覆盖该防守分支。
+
+        该判定已随依赖分析独立到 DependencyGraph（规划层 §3.2），
+        校验入口为 DependencyGraph.validate()。
+        """
+        monkeypatch.setattr(DependencyGraph, "final_tasks", lambda self: set())
         llm = ScriptedLLM(raw(VALID))
         with pytest.raises(DecomposeError) as ei:
             Decomposer(llm, max_retries=0).decompose("目标")

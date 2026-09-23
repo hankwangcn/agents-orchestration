@@ -142,6 +142,15 @@ class TestDecompose:
         assert out["run_id"] is None
         assert set(out["dag"]["tasks"]) == {"a", "b"}
         assert out["dag"]["tasks"]["b"]["deps"] == ["a"]
+        # 规划层「依赖分析」产物：拓扑分层 = 并行前沿
+        assert out["analysis"] == {
+            "task_count": 2,
+            "levels": [["a"], ["b"]],
+            "depth": 2,
+            "max_parallel_width": 1,
+            "roots": ["a"],
+            "final_tasks": ["b"],
+        }
         # 未提交 → 无 run
         assert manager._runs == {}
 

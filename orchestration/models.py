@@ -1,7 +1,11 @@
-"""核心数据模型：Task / Result（结果契约）/ DAG（含图算法）。
+"""核心数据模型：Task / Result（结果契约）/ DAG（含调度期图操作）。
 
 对应 docs/architecture.md §4 数据模型。
 Result 是框架一切逻辑的枢纽——审计、资源统计、失败处理、自我学习全部依赖此契约。
+
+依赖分析（纯结构图算法：可达性 / 拓扑序 / 并行前沿 / 校验）已独立成
+`dependency.DependencyGraph`（架构 §3.2 规划层"依赖分析"）；此处的 DAG
+保留同名方法作**薄委托**（调用点零改动）+ 调度期状态操作（就绪集 / 剪枝）。
 """
 from __future__ import annotations
 
@@ -9,6 +13,8 @@ from enum import Enum
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
+
+from .dependency import DependencyGraph
 
 
 class TaskStatus(str, Enum):
@@ -121,24 +127,19 @@ class DAG(BaseModel):
     """
     tasks: dict[str, Task] = Field(default_factory=dict)
 
-    # ---------- 图基础 ----------
+    # ---------- 依赖分析（委托规划层 DependencyGraph） ----------
+
+    def dependency_graph(self) -> DependencyGraph:
+        """取本 DAG 的依赖分析视图（规划层「依赖分析」产物）。"""
+        return DependencyGraph(self)
 
     def descendants(self, task_id: str) -> set[str]:
         """T 的全部后代（含间接下游）——输入链断裂所波及的任务。"""
-        result: set[str] = set()
-        stack = [t for t in self.tasks if task_id in self.tasks[t].deps]
-        while stack:
-            cur = stack.pop()
-            if cur in result:
-                continue
-            result.add(cur)
-            stack.extend(t for t in self.tasks if cur in self.tasks[t].deps)
-        return result
+        return self.dependency_graph().descendants(task_id)
 
     def final_tasks(self) -> set[str]:
         """最终交付任务：出度为 0（产出无人继续消费，即交付点）。"""
-        consumed = {d for t in self.tasks.values() for d in t.deps}
-        return {tid for tid in self.tasks if tid not in consumed}
+        return self.dependency_graph().final_tasks()
 
     def reverse_reachable(self, roots: set[str]) -> set[str]:
         """反向可达：从 roots 沿依赖边反向遍历，返回全部上游。
@@ -146,15 +147,9 @@ class DAG(BaseModel):
         剪枝判据（架构 §5.2）："我的产出还有没有人要？"
         反向走得到 = 产出仍被最终交付消费 = 保留。
         """
-        reachable: set[str] = set()
-        stack = list(roots)
-        while stack:
-            cur = stack.pop()
-            if cur in reachable:
-                continue
-            reachable.add(cur)
-            stack.extend(self.tasks[cur].deps)
-        return reachable
+        return self.dependency_graph().reverse_reachable(roots)
+
+    # ---------- 运行时就绪（读任务状态，属调度层） ----------
 
     def ready_tasks(self) -> list[str]:
         """拓扑序可派发：pending 且所有依赖已 success。"""

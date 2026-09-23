@@ -12,6 +12,8 @@ import asyncio
 import pytest
 
 from orchestration.adapters.base import AgentAdapter
+from orchestration.agent_pool import AgentPool
+from orchestration.allocator import Allocator
 from orchestration.models import ResourceRequirement, Result, Task
 from orchestration.registry import AgentRegistry, INFO_QUESTIONS, RegistryError
 
@@ -565,3 +567,101 @@ class TestFromConfig:
         cfg.write_text("agents: []", encoding="utf-8")
         with pytest.raises(RegistryError, match="pyyaml"):
             AgentRegistry.from_config(str(cfg))
+
+
+# ---------------------------------------------------------------------------
+# 层职责切分（本次详细设计）：规划层 AgentPool × 调度层 Allocator
+# ---------------------------------------------------------------------------
+
+class TestLayerSplit:
+    """registry 按六层架构切成两半，AgentRegistry 仅作零逻辑门面。
+
+    - 规划层「资源统计器」= AgentPool：注册 / 采集 / 声明 / 刷新 / 画像
+    - 调度层「资源协调器」= Allocator：三级分配 / 轮询 / 摘除
+    """
+
+    def test_pool_is_planning_only(self):
+        """AgentPool 不做分配与摘除（那是调度层的职责）。"""
+        pool = AgentPool()
+        assert not hasattr(pool, "assign")
+        assert not hasattr(pool, "record_failure")
+        assert not hasattr(pool, "mark_unavailable")
+
+    def test_allocator_is_scheduling_only(self):
+        """Allocator 不采集、不刷新（那是规划层的职责）。"""
+        alloc = Allocator(AgentPool())
+        assert not hasattr(alloc, "collect")
+        assert not hasattr(alloc, "ensure_fresh")
+        assert not hasattr(alloc, "validate_before_dispatch")
+
+    def test_facade_exposes_both_layers(self):
+        reg = AgentRegistry()
+        assert isinstance(reg.pool, AgentPool)
+        assert isinstance(reg.allocator, Allocator)
+        # 门面属性直通层内实例
+        reg.collect_ttl_seconds = 42.0
+        assert reg.pool.collect_ttl_seconds == 42.0
+        reg.validate_on_dispatch = False
+        assert reg.pool.validate_on_dispatch is False
+        reg.max_consecutive_failures = 7
+        assert reg.allocator.max_consecutive_failures == 7
+
+    def test_facade_delegates_registration_to_pool(self):
+        """经门面注册 → 池内可见（同一份档案，不是副本）。"""
+        reg = AgentRegistry()
+        aid = reg.register(InfoAdapter(), agent_id="a1")
+        assert reg.pool.agents["a1"] is reg.agents[aid]
+        assert reg.pool.get("a1").agent_id == "a1"
+
+    def test_facade_delegates_assignment_to_allocator(self):
+        """经门面分配 → 与直接调 Allocator 结果一致。"""
+        reg = AgentRegistry()
+        reg.register(InfoAdapter(model="m"), agent_id="a1")
+        reg.collect("a1")
+        assignment, adapter = reg.assign(make_task(model="m"))
+        direct, _ = reg.allocator.assign(make_task(model="m"))
+        assert assignment.match_type == "exact"
+        assert assignment.agent_id == "a1"
+        assert direct.agent_id == "a1"
+        assert adapter is reg.pool.get_adapter("a1")
+
+    def test_failure_removal_is_allocator_state(self):
+        """摘除写的是池里同一个档案对象（层内共享，非拷贝）。"""
+        reg = AgentRegistry(max_consecutive_failures=1)
+        reg.register(InfoAdapter(), agent_id="a1")
+        reg.record_failure("a1")
+        assert reg.pool.get("a1").status == "unavailable"
+        reg.mark_available("a1")
+        assert reg.pool.get("a1").status == "available"
+
+    def test_allocator_works_against_bare_pool(self):
+        """Allocator 可直接依赖 AgentPool 使用（层间只靠画像接口耦合）。"""
+        pool = AgentPool()
+        pool.register(InfoAdapter(model="m", declarations=DECL), agent_id="a1")
+        pool.collect("a1")
+        alloc = Allocator(pool, max_consecutive_failures=2)
+        assignment, _ = alloc.assign(make_task(model="m", caps=["code_review"]))
+        assert assignment.match_type == "exact"
+        assert assignment.risk is False
+        assert pool.get("a1").capabilities == ["code_review", "data_analysis"]
+
+    def test_no_assignment_in_pool_module(self):
+        """模块归属断言：分配逻辑只存在于调度层模块。"""
+        import orchestration.agent_pool as pool_mod
+        import orchestration.allocator as alloc_mod
+
+        assert not hasattr(pool_mod.AgentPool, "assign")
+        assert hasattr(alloc_mod.Allocator, "assign")
+
+    def test_registry_reexports_for_compat(self):
+        """旧导入路径保持可用（层间切分不破坏既有调用点）。"""
+        from orchestration.registry import (  # noqa: F401
+            Assignment,
+            INFO_QUESTIONS,
+            RegisteredAgent,
+            VOLATILE_SCOPES,
+        )
+        assert INFO_QUESTIONS is not None
+        assert Assignment is not None
+        assert RegisteredAgent is not None
+        assert VOLATILE_SCOPES == ("resource", "constraint")

@@ -18,6 +18,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from ..decomposer import DecomposeError, Decomposer
+from ..dependency import DependencyGraph
 from ..metrics import MetricsCollector, configure_logging, log_event
 from ..models import DAG, Result, TaskStatus
 from ..registry import AgentRegistry
@@ -127,6 +128,9 @@ class RunManager:
             "goal": goal,
             "status": "decomposed",
             "dag": dag.model_dump(mode="json"),
+            # 规划层「依赖分析」产物摘要：拓扑分层即并行前沿（同层可并行），
+            # 最大并行宽度供资源协调参考
+            "analysis": _dependency_analysis(dag),
             "run_id": None,
         }
         log_event("goal_decomposed", dag_size=len(dag.tasks), submit=submit)
@@ -457,6 +461,23 @@ def create_app(
 def _now() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _dependency_analysis(dag: DAG) -> dict:
+    """依赖分析摘要（规划层 DependencyGraph 的结构视图）。
+
+    只暴露结构信息，不含运行时状态——运行中进度看 snapshot。
+    """
+    graph = DependencyGraph(dag)
+    levels = graph.levels()
+    return {
+        "task_count": len(graph.tasks),
+        "levels": levels,                       # 拓扑分层：同层可并行
+        "depth": len(levels),
+        "max_parallel_width": graph.max_parallel_width(),
+        "roots": sorted(graph.roots()),
+        "final_tasks": sorted(graph.final_tasks()),
+    }
 
 
 def _result_summary(r: object) -> dict:

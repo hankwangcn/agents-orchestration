@@ -208,6 +208,14 @@
             <div class="chips"><span>输出：依赖 DAG</span><span>能力需求声明</span><span>Schema 校验</span><span>目标→DAG 接入</span></div>
           </div>
         </div>
+        <div class="card">
+          <div class="badge" style="--cc:#6d28d9">依赖</div>
+          <div class="card-main">
+            <div class="card-title">依赖分析 <span class="path">orchestration/dependency.py</span></div>
+            <div class="card-desc">DAG → <span class="path">DependencyGraph</span>：数据流依赖的独立结构视图。<b>纯结构、不持有运行时状态</b>（status 归调度层）。提供引用合法性 / 成环检测 / 拓扑序 / <b>拓扑分层（并行前沿）</b> / 最大并行宽度 / 可达性与反向可达（剪枝判据）/ 交付点；拆解产物的合法性校验由它做。网关上 <span class="path">POST /api/decompose</span> 直接回 <span class="path">analysis</span>（分层 + 并行宽度）。</div>
+            <div class="chips"><span>DAG → DependencyGraph</span><span>拓扑分层=并行前沿</span><span>反向可达（剪枝判据）</span><span>无环/引用/交付点校验</span></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -235,8 +243,8 @@
         <div class="card">
           <div class="badge" style="--cc:#0f766e">资源</div>
           <div class="card-main">
-            <div class="card-title">Agent 注册表 <span class="path">orchestration/registry.py</span></div>
-            <div class="card-desc">能力是问出来的，不是配出来的：info_request 采集 capability / resource / constraint 声明入库（单点失败隔离）。刷新策略 = TTL 惰性刷新 + 决策点校验（池级过期即刷、派发前复核易变维度）。三级分配全程留痕：exact（同 model 多实例轮询）→ capability（部分覆盖标 risk）→ degraded（降级通用 LLM）。连续任务失败达阈值自动摘除。</div>
+            <div class="card-title">Agent 注册表 <span class="path">registry.py</span></div>
+            <div class="card-desc">按层切分：规划层「资源统计器」<span class="path">agent_pool.py</span>（注册 / 采集 / 声明 / TTL 刷新）+ 调度层「资源协调器」<span class="path">allocator.py</span>（三级分配 / 摘除），<span class="path">registry.py</span> 为组合门面（零逻辑转发，公开 API 不变）。能力是问出来的，不是配出来的：info_request 采集 capability / resource / constraint 声明入库（单点失败隔离）。刷新策略 = TTL 惰性刷新 + 决策点校验（池级过期即刷、派发前复核易变维度）。三级分配全程留痕：exact（同 model 多实例轮询）→ capability（部分覆盖标 risk）→ degraded（降级通用 LLM）。连续任务失败达阈值自动摘除。</div>
             <div class="chips"><span>exact 精确匹配</span><span>capability 能力匹配</span><span>degraded 降级留痕</span><span>失败摘除</span></div>
           </div>
         </div>
@@ -394,7 +402,7 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v1.5 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固 + 规划层接入（目标 → 拆解 → 资源协调 → 并发调度 → 治理学习 → 崩溃恢复）· 278/278 测试全绿
+  <b>Agents Orchestration</b> · 架构 v1.6 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固 + 规划层接入与切分（依赖分析独立 / 注册表分层）（目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理学习 → 崩溃恢复）· 310/310 测试全绿
 </footer>
 
 </div>

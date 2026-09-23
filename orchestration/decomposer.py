@@ -18,6 +18,7 @@ import inspect
 import json
 from typing import Callable, Optional
 
+from .dependency import DependencyError, DependencyGraph
 from .models import DAG, ResourceRequirement, SideEffects, Task
 from .validation import ResponseValidationError, extract_json
 
@@ -174,31 +175,13 @@ class Decomposer:
                 side_effects=SideEffects(side),
             )
 
-        # 依赖引用存在性
-        for tid, t in tasks.items():
-            for d in t.deps:
-                if d not in tasks:
-                    raise ResponseValidationError(f"任务 {tid} 依赖不存在的任务 {d}")
-
-        # 无环：Kahn 拓扑排序
+        # 依赖分析（规划层 §3.2）：引用存在 → 无环 → 至少一个交付点。
+        # 原为拆解引擎内联 Kahn 实现，现收敛到独立 DependencyGraph。
         dag = DAG(tasks=tasks)
-        indeg = {tid: len(t.deps) for tid, t in tasks.items()}
-        queue = [tid for tid, deg in indeg.items() if deg == 0]
-        visited = 0
-        while queue:
-            cur = queue.pop()
-            visited += 1
-            for tid, t in tasks.items():
-                if cur in t.deps:
-                    indeg[tid] -= 1
-                    if indeg[tid] == 0:
-                        queue.append(tid)
-        if visited != len(tasks):
-            raise ResponseValidationError("依赖关系成环，不是 DAG")
-
-        # 至少一个 final（出度为 0）
-        if not dag.final_tasks():
-            raise ResponseValidationError("不存在最终交付任务（出度为 0 的任务）")
+        try:
+            DependencyGraph(dag).validate()
+        except DependencyError as e:
+            raise ResponseValidationError(str(e)) from e
 
         return dag
 

@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-278%2F278%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-310%2F310%20passing-brightgreen)](tests/)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不监控 agent 内部状态。**
 
@@ -18,11 +18,12 @@
 | **结果导向编排** | 框架只管理任务到结果的结果契约，不监控 agent 内部运行状态；批处理式"任务 → 结果"执行，过程交给 agent 自己 |
 | **断点持久化** | 调度状态（DAG / 任务状态 / 分配 / 剪枝）事件驱动落盘 SQLite；进程崩溃后无缝恢复——纯产出任务自动重派，副作用任务置 `INTERRUPTED` 等人工确认，已终态任务复用结果与成本 |
 | **目标即入口** | 一句自然语言目标 → 规划层拆解为任务 DAG →（可选）直接提交执行：网关 `POST /api/decompose` / CLI `ao decompose --submit`，"目标 → 结果"一条链；拆解是框架内部 LLM 调用，**不走消息协议** |
+| **依赖分析独立** | `DAG → DependencyGraph` 纯结构视图：成环检测 / 拓扑序 / **拓扑分层（并行前沿）** / 最大并行宽度 / 反向可达（剪枝判据）；`/api/decompose` 直接回 `analysis`（分层 + 并行宽度），规划层这一环有真实产物 |
 | **提示词即协议** | 与 agent 的唯一沟通方式是格式化提示词模板 + JSON 请求（`task_request` / `info_request`）；agent 零适配，协议演进仅需修改模板文本 |
 | **零成本接入** | agent 暴露 OpenAI 兼容 chat completions 端点即可接入（DeepSeek / vLLM / Ollama / 自研），注册表配置即完成；同进程 Python agent 免 HTTP（`InProcessAdapter` 直调本地函数）；不兼容的自建系统仅需实现一个 `_call_llm` 方法 |
 | **配置驱动注册** | `AgentRegistry.from_config(agents.yaml)` 批量注册 N 个 agent——只写"agent 在哪、叫什么模型"，能力 / 并发 / 预算声明由 `info_request` 自动问出；`api_key_env` 从环境变量取密钥 |
 | **CLI 运维入口** | 网关瘦客户端 `ao`（仅标准库 urllib）：目标拆解 / 提交 DAG / 进度 / 报告 / 指标 / 取消 / 断点恢复 / 人工 resolve / agent 档案，一条命令完成运维与人工出口 |
-| **资源统计与分配** | 通过 `info_request` 采集 agent 能力 / 资源 / 约束声明入库；三级分配策略：精确匹配 → 能力匹配 → 降级兜底，全程留痕 |
+| **资源统计与分配** | 通过 `info_request` 采集 agent 能力 / 限制声明入库（**规划层 `AgentPool`**）；三级分配策略：精确匹配 → 能力匹配 → 降级兜底，全程留痕，失败摘除（**调度层 `Allocator`**）——按六层架构物理分文件，`AgentRegistry` 为组合门面 |
 | **失败处理** | 自动重试 → 失败传播 → 反向可达性剪枝（死任务消除）；并发场景下竞态安全（先冻结派发，再逐级取消，晚到结果丢弃） |
 | **框架侧超时封顶** | 单次尝试超过 `required_resources.timeout` 由框架强制中断（不依赖 agent 履约），agent 挂死不再永久占住并发槽；超时汇入既有重试/剪枝链路 |
 | **并发调度** | asyncio 事件驱动并发派发；per-agent 并发上限与速率配额强制执行；单实例可并发运行多个 DAG，状态隔离 |
@@ -368,11 +369,14 @@ registry = AgentRegistry.from_config(cfg, adapter_factory=lambda e: InProcessAda
 ```
 agents-orchestration/
 ├── orchestration/
-│   ├── models.py            # 数据模型：Task / Result 契约 / DAG（图算法）/ ScheduleReport
+│   ├── models.py            # 数据模型：Task / Result 契约 / DAG（调度期状态操作）/ ScheduleReport
+│   ├── dependency.py        # 依赖分析（规划层）：DAG → DependencyGraph（拓扑/并行前沿/可达/校验）
+│   ├── agent_pool.py        # 资源统计器（规划层）：注册 / info_request 采集 / 声明解析 / TTL 刷新
+│   ├── allocator.py         # 资源协调器（调度层）：三级分配 / 多实例轮询 / 连续失败摘除
 │   ├── protocol.py          # 消息协议模板（完整/简化版）+ 请求构造 + 渲染
 │   ├── validation.py        # 解析组件：双层校验（提取 → Schema 校验 → 重试）
 │   ├── decomposer.py        # 任务拆解：目标 → 依赖 DAG（含能力需求声明）
-│   ├── registry.py          # Agent 注册表：info_request 采集 / 三级分配 / 故障摘除
+│   ├── registry.py          # Agent 注册表门面：组合规划层 AgentPool + 调度层 Allocator（零逻辑转发）
 │   ├── scheduler.py         # 同步调度器：拓扑派发 + 失败传播 + 剪枝
 │   ├── scheduler_async.py   # 异步并发调度器：并发派发 + 竞态处理 + 资源限制
 │   ├── metrics.py           # 可观测性：指标聚合 + 结构化日志
@@ -391,7 +395,7 @@ agents-orchestration/
 │   ├── smoke_deepseek.py     # 真实模型端到端冒烟（需 $DEEPSEEK_API_KEY）
 │   ├── smoke_decompose.py    # 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 278 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
+├── tests/                   # 310 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 并发 / 网关 / 断点 / CLI / 适配器）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告
 └── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
@@ -402,10 +406,10 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 278/278 全绿
+pytest        # 310/310 全绿
 ```
 
-测试覆盖重点：解析组件（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）。
+测试覆盖重点：依赖分析（拓扑分层/并行前沿/可达性/成环与引用校验，23 项）、层职责切分（规划层 `AgentPool` × 调度层 `Allocator`）、解析组件（最严格模块，32 项）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）。
 
 ---
 
