@@ -2,7 +2,7 @@
 
 > 版本：v1.0
 > 日期：2026-08-15
-> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固，224/224 测试全绿）
+> 状态：已实现（阶段一至四全部完成 + 断点持久化增强 + 多 run 并发加固，232/232 测试全绿）
 
 ---
 
@@ -94,7 +94,7 @@ flowchart TB
 | 模块 | 职责 | 关键输入 → 输出 |
 |---|---|---|
 | 任务拆解引擎 | LLM 将目标拆解为子任务 + 依赖 DAG | 目标 → `DAG{Task[]}` |
-| 资源统计器 | info_request 采集 agent 能力 / 资源 / 约束声明（阶段三 `AgentRegistry`） | agent 池 → `AgentProfile[]` |
+| 资源统计器 | info_request 采集 agent 能力 / 资源 / 约束声明（阶段三 `AgentRegistry`）；刷新策略 = **TTL 惰性刷新 + 决策点校验**——池级 `ensure_fresh()` 读时过期即刷，派发前 `validate_before_dispatch()` 对选中 agent 复核易变维度（resource/constraint） | agent 池 → `AgentProfile[]` |
 | 依赖分析 | 标注数据流依赖（A 的结果是 B 的输入） | `DAG` → `DependencyGraph` |
 | 资源协调器 | 在多个可用 agent / 模型间分配资源，防超配 | `ResourcePlan` + agent 池 → `Allocation` |
 | DAG 调度器 | 按拓扑序派发任务，传递结果，管理取消 | `Allocation` + 结果流 → 派发/取消指令 |
@@ -306,6 +306,7 @@ flowchart LR
 - [x] **断点持久化增强**（2026-08-15 完成，独立于四阶段）— 见 §5.5 — 实现：`SqliteStateStore`（orchestration/state_store.py，事件驱动落盘 + assignments/prune 表）、`AsyncScheduler.resume_run`（A+B 恢复策略 + SKIPPED 依赖恢复 + seed 注入复用已完成结果）、网关 `resume`/`resolve` 端点、审计 INTERRUPTED 标记 + 学习 INT-1 规则。冒烟（scripts/smoke_resume.py）实测：无副作用任务执行中崩溃 → 恢复重派续跑；副作用任务执行中崩溃 → INTERRUPTED → 人工 complete → 续跑。修复关键缺陷：任务启动 RUNNING 未落盘（副作用任务崩溃恢复会被当普通任务重派）。测试 168/168 全绿，见 §10
 - [x] **代码审查修复：多 run 并发加固 + 一致性收尾**（2026-09-02 完成）— ①AsyncScheduler 派发循环：ready 任务因 per-agent 并发槽被其他 run 占用（RunManager 共用单 AsyncScheduler，_sems 跨 run 共享）时等待槽位释放后重派——原缺陷把配额阻塞误判为依赖失败不可达，并发提交的 run 全任务误标 SKIPPED 且 final_status=success 静默丢交付（回归：test_scheduler_async.py::TestMultiRunQuota）；②metrics 峰值并发按 agent 记账（原把全 DAG 的 RUNNING 数虚记到单 agent 名下，多 agent 并行时 peak_concurrency 虚高）；③`_RateLimiter` 落地为真滑动窗口（时间戳队列，窗口边界无 2×limit 突发，实现与文档口径一致）；④REPL 非 CliError 异常（submit 文件不存在/JSON 损坏等 OSError/json.JSONDecodeError）报错不退出会话（回归：test_cli_shell.py::test_non_cli_error_does_not_exit_session）；⑤pyflakes 清零（未使用导入 ×5、未使用变量 ×2、f-string ×3），visualize_report agent 摘除徽标 literal-brace 显示缺陷顺带修复。测试 221/221 全绿，见 §10
 - [x] **一致性收尾补遗：constraint 分流 + 运行中快照 agent**（2026-09-07 完成）— ①constraint 采集分流（registry.py）：q1 为混合自由文本（如"工作时间 9点~18点；禁止访问外网"），原实现整段扫入 forbidden——时间窗短语污染约束匹配/审计/学习规则的输入口径；现按 `_is_time_window`（~/点/window/时间窗）分流归 time_windows，"无"（含空白变体）不计入任何一方（回归：test_registry.py::TestCollect 两项）；②网关运行中快照 agent 字段（gateway.py + scheduler_async.py）：原 `_task_agent` 依赖 ScheduleReport（仅收尾后生成），运行中/RUNNING 快照 tasks[].agent 恒空串；现 AsyncScheduler 托管 live 分配映射（run 注册/_run_loop finally 注销，异常路径不留幽灵状态），新增 `task_agents(run_id)` 查询，网关运行中从 live 映射读取——任务派发即有归属（回归：test_gateway.py::test_running_snapshot_has_agent）。测试 224/224 全绿，见 §10
+- [x] **规划层定标①：删除 time_windows + 资源池刷新策略落地**（2026-09-23 完成）— 对话裁定：①`time_windows` 字段**删除**（采集但无任何消费方，属悬空声明；约束口径收敛为功能限制 `forbidden` + `languages`，时间窗文本由 `_looks_like_time_window` 从 forbidden 中剔除——不重蹈 09-07 前污染覆辙）；②资源池刷新 = **TTL 惰性刷新 + 决策点校验**：`RegisteredAgent.last_collected_at` + `collect_ttl_seconds`（默认 300s）判过期；池级 `ensure_fresh()` 在读时对过期 agent 重采（新鲜零开销，`AsyncScheduler.run` 起点调用）——保证三级分配看到的池级画像不陈旧；决策点 `validate_before_dispatch()` 在**派发前**对选中的目标 agent 复核易变维度 `VOLATILE_SCOPES`（resource/constraint，capability 变化慢交给池级 TTL），失败保留上次已知值不阻塞派发（同步/异步双路径，同步 `Scheduler` 与 `AsyncScheduler` 均已接线；`validate_on_dispatch` 可关）。约束采集问题 q1 同步改为"功能限制"措辞。回归：test_registry.py::TestRefresh 六项 + test_scheduler_async.py::TestRefreshWiring 两项（接线：池级 3 类各一次 + 决策点 resource/constraint；新鲜 skip 验证）。测试 232/232 全绿，见 §10
 
 ---
 
@@ -346,7 +347,7 @@ agentsOrchestration/
 │   ├── protocol.py          # PROTOCOL_PROMPT 模板（完整/简化版）+ 请求构造 + 渲染
 │   ├── validation.py        # 双层校验：提取 → Schema 校验 → 解析重试（同步/异步）
 │   ├── decomposer.py        # 任务拆解：LLM 生成 DAG + 拆解 Schema 校验
-│   ├── registry.py          # Agent 注册表：采集 / 分配 / 摘除（阶段三）
+│   ├── registry.py          # Agent 注册表：采集（TTL+决策点刷新）/ 分配 / 摘除（阶段三）
 │   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘，§5.5）
 │   ├── scheduler.py         # 同步调度器：拓扑派发 + 任务分配 + 失败传播 + 剪枝
 │   ├── scheduler_async.py   # 异步并发调度器：并发派发 + 竞态处理 + 资源限制（阶段四）

@@ -51,6 +51,9 @@ class Scheduler:
         prune_reports: list[PruneReport] = []
         assignments: list[Assignment] = []
 
+        # 池级 TTL 刷新（与 AsyncScheduler 一致）：过期画像先刷一遍
+        self._registry.ensure_fresh()
+
         while not dag.all_terminal():
             ready = dag.ready_tasks()
             if not ready:
@@ -63,6 +66,8 @@ class Scheduler:
             for tid in ready:
                 task = dag.tasks[tid]
                 assignment, adapter = self._registry.assign(task)
+                # 决策点校验：派发前复核目标 agent 的易变维度（resource/constraint）
+                self._registry.validate_before_dispatch(assignment.agent_id)
                 assignments.append(assignment)
                 self._task_agent[tid] = assignment.agent_id
 

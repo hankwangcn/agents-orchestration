@@ -455,3 +455,57 @@ class TestMultiRunQuota:
         run(sched, dag)
 
         assert dag.tasks["b"].status == TaskStatus.SKIPPED
+
+
+# ---------------------------------------------------------------------------
+# 刷新策略接线：池级 TTL 刷新 + 派发决策点校验
+# ---------------------------------------------------------------------------
+
+class _InfoProbeAdapter(AsyncScriptedAdapter):
+    """支持同步/异步信息请求并记录 scope 的适配器。"""
+
+    def __init__(self, script, model="deepseek-chat", declarations=None):
+        super().__init__(script, model=model)
+        self.declarations = declarations or {}
+        self.info_scopes: list[str] = []
+
+    def _info(self, scope):
+        self.info_scopes.append(scope)
+        return Result(task_id="", success=True,
+                      output=self.declarations.get(scope, {}))
+
+    def run_info(self, scope, questions, request_id):
+        return self._info(scope)
+
+    async def arun_info(self, scope, questions, request_id):
+        return self._info(scope)
+
+
+class TestRefreshWiring:
+    def test_dispatch_validates_only_volatile_scopes(self):
+        """派发前对选中 agent 复核 resource/constraint（能力标签不问）。"""
+        dag = dag_of(("a", []))
+        adapter = _InfoProbeAdapter(
+            {"a": [ok("a")]},
+            declarations={"resource": {"q1": "3", "q2": "0", "q3": "0"},
+                          "constraint": {"q1": "无", "q2": "Python"},
+                          "capability": {"q1": "x", "q2": "y"}},
+        )
+        sched, _ = make_scheduler(adapter)
+        run(sched, dag)
+
+        # run 起点池级刷新 + 派发决策点校验；capability 只在池级出一次
+        assert adapter.info_scopes.count("resource") == 2
+        assert adapter.info_scopes.count("constraint") == 2
+        assert adapter.info_scopes.count("capability") == 1
+
+    def test_pool_refresh_skips_fresh_agents(self):
+        """run 起点池级刷新：刚采集过（TTL 内）→ 不重复问。"""
+        dag = dag_of(("a", []))
+        adapter = _InfoProbeAdapter({"a": [ok("a")]})
+        sched, reg = make_scheduler(adapter)
+        reg.collect()  # 先采集一次 → 新鲜
+        before = list(adapter.info_scopes)
+        run(sched, dag)
+        # 池级刷新跳过（新鲜），仅派发决策点仍有 2 次易变维度校验
+        assert adapter.info_scopes[len(before):] == ["resource", "constraint"]

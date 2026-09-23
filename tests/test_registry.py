@@ -7,6 +7,8 @@
 """
 from typing import Optional
 
+import asyncio
+
 import pytest
 
 from orchestration.adapters.base import AgentAdapter
@@ -47,6 +49,14 @@ class InfoAdapter(AgentAdapter):
 
     def _call_llm(self, messages):
         raise NotImplementedError
+
+
+class AsyncInfoAdapter(InfoAdapter):
+    """异步采集路径（决策点校验 avalidate_before_dispatch 用）。"""
+
+    async def arun_info(self, scope: str, questions: list[str],
+                        request_id: str) -> Result:
+        return self.run_info(scope, questions, request_id)
 
 
 def make_task(model: str = "deepseek-chat", caps: Optional[list[str]] = None) -> Task:
@@ -136,8 +146,9 @@ class TestCollect:
         assert agent.max_concurrency == 5
         assert agent.capabilities == []  # 未采集的 scope 保持空
 
-    def test_constraint_time_windows_not_pollute_forbidden(self):
-        """q1 混合回答分流：时间窗归 time_windows，不混入 forbidden。"""
+    def test_constraint_time_window_text_excluded_from_forbidden(self):
+        """q1 中误入的时间窗文本被剔除（time_windows 字段已废弃），
+        仅真实禁忌项入 forbidden。"""
         decl = {
             "constraint": {
                 "q1": "工作时间 9点~18点；禁止访问外网; 输出必须是JSON",
@@ -148,19 +159,17 @@ class TestCollect:
         aid = reg.register(InfoAdapter(declarations=decl))
         reg.collect(agent_id=aid, scope="constraint")
         agent = reg.get(aid)
-        assert agent.time_windows == ["工作时间 9点~18点"]
         assert agent.forbidden == ["禁止访问外网", "输出必须是JSON"]
         assert agent.languages == ["Python", "SQL"]
+        assert not hasattr(agent, "time_windows")  # 字段已删除
 
     def test_constraint_none_and_blank_excluded(self):
-        """『无』（含空白变体）与空回答不计入 forbidden/time_windows。"""
+        """『无』（含空白变体）与空回答不计入 forbidden。"""
         for raw in ("无", " 无 "):
             reg = AgentRegistry()
             aid = reg.register(InfoAdapter(declarations={"constraint": {"q1": raw}}))
             reg.collect(agent_id=aid, scope="constraint")
-            agent = reg.get(aid)
-            assert agent.forbidden == []
-            assert agent.time_windows == []
+            assert reg.get(aid).forbidden == []
 
     def test_collect_failure_is_isolated(self):
         """单 scope 采集失败不中断，摘要留痕。"""
@@ -195,6 +204,69 @@ class TestCollect:
         aid = reg.register(adapter)
         reg.collect(agent_id=aid, scope="capability")
         assert reg.get(aid).capabilities == ["翻译", "校对"]
+
+
+# ---------------------------------------------------------------------------
+# 刷新策略：TTL 惰性刷新 + 决策点校验
+# ---------------------------------------------------------------------------
+
+class TestRefresh:
+    def test_ensure_fresh_skips_fresh_agent(self):
+        """刚采集过 → TTL 内 → 池级刷新零网络开销。"""
+        reg = AgentRegistry()
+        adapter = InfoAdapter(declarations=DECL)
+        aid = reg.register(adapter)
+        reg.collect(agent_id=aid)
+        before = len(adapter.info_calls)
+        assert reg.ensure_fresh() == []
+        assert len(adapter.info_calls) == before
+
+    def test_ensure_fresh_refreshes_stale_agent(self):
+        """超过 TTL → 重新采集全部三类。"""
+        reg = AgentRegistry()
+        adapter = InfoAdapter(declarations=DECL)
+        aid = reg.register(adapter)
+        reg.collect(agent_id=aid)
+        reg.get(aid).last_collected_at = "2000-01-01T00:00:00+00:00"
+        before = len(adapter.info_calls)
+        summary = reg.ensure_fresh()
+        assert {s["scope"] for s in summary} == {"capability", "resource", "constraint"}
+        assert len(adapter.info_calls) == before + 3
+
+    def test_validate_before_dispatch_volatile_scopes_only(self):
+        """决策点只复核易变维度（resource/constraint），不问 capability。"""
+        reg = AgentRegistry()
+        adapter = InfoAdapter(declarations=DECL)
+        aid = reg.register(adapter)
+        reg.validate_before_dispatch(aid)
+        assert [c[0] for c in adapter.info_calls] == ["resource", "constraint"]
+
+    def test_validate_on_dispatch_can_be_disabled(self):
+        reg = AgentRegistry(validate_on_dispatch=False)
+        adapter = InfoAdapter(declarations=DECL)
+        aid = reg.register(adapter)
+        assert reg.validate_before_dispatch(aid) == []
+        assert adapter.info_calls == []
+
+    def test_validate_failure_keeps_last_known_values(self):
+        """校验失败不阻塞派发：保留上次已知画像。"""
+        reg = AgentRegistry()
+        adapter = InfoAdapter(declarations=DECL)
+        aid = reg.register(adapter)
+        reg.collect(agent_id=aid)
+        adapter.fail_scopes |= {"resource", "constraint"}
+        reg.validate_before_dispatch(aid)
+        agent = reg.get(aid)
+        assert agent.max_concurrency == 5
+        assert agent.languages == ["Python", "SQL"]
+
+    def test_avalidate_before_dispatch_async(self):
+        """异步决策点校验（AsyncScheduler 路径）。"""
+        reg = AgentRegistry()
+        adapter = AsyncInfoAdapter(declarations=DECL)
+        aid = reg.register(adapter)
+        summary = asyncio.run(reg.avalidate_before_dispatch(aid))
+        assert {s["scope"] for s in summary} == {"resource", "constraint"}
 
 
 # ---------------------------------------------------------------------------

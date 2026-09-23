@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable, Optional, Union
@@ -36,10 +37,14 @@ INFO_QUESTIONS: dict[str, list[str]] = {
         "单个任务的预算上限是多少美元？只回答数字，未知填 0",
     ],
     "constraint": [
-        "你有哪些使用约束？如可用时间窗口、禁用事项，用分号分隔；没有则回答 无",
+        "你有哪些功能限制？如禁止事项，用分号分隔；没有则回答 无",
         "你支持哪些语言？用逗号分隔",
     ],
 }
+
+# 派发决策真正依赖、且易变的声明维度（决策点校验只复核这两类）：
+# 能力标签（capability）变化慢，交给池级 TTL 即可
+VOLATILE_SCOPES: tuple[str, ...] = ("resource", "constraint")
 
 
 # ---------------------------------------------------------------------------
@@ -59,8 +64,7 @@ class RegisteredAgent:
     max_concurrency: int = 1
     rate_limit_per_min: int = 0
     budget_limit_usd: float = 0.0
-    # 约束声明（constraint scope）
-    time_windows: list[str] = field(default_factory=list)
+    # 约束声明（constraint scope）——功能限制
     forbidden: list[str] = field(default_factory=list)
     languages: list[str] = field(default_factory=list)
     # 运行时状态（调度器维护）
@@ -83,10 +87,12 @@ def _split_tags(text: str) -> list[str]:
     return [t.strip() for t in tags if t.strip()]
 
 
-def _is_time_window(tag: str) -> bool:
-    """约束标签是否为时间窗描述（如"工作时间 9点~18点"）。
+def _looks_like_time_window(tag: str) -> bool:
+    """识别时间窗描述（如"工作时间 9点~18点"）。
 
-    用于 constraint 分流：时间窗归 time_windows，不混入 forbidden。
+    时间窗字段（原 `time_windows`）已废弃——采集但无消费方，故删除。
+    此判定仅用于把误入 constraint q1 的时间窗文本从 forbidden 中剔除，
+    避免污染约束匹配/审计/学习规则的输入口径。
     """
     t = (tag or "").lower()
     return "~" in t or "点" in t or "window" in t or "时间窗" in t
@@ -98,6 +104,16 @@ def _first_number(text: str) -> float:
     return float(m.group()) if m else 0.0
 
 
+def _parse_ts(s: Optional[str]) -> Optional[float]:
+    """ISO 时间戳字符串 → epoch 秒（无法解析返回 None）。"""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s).timestamp()
+    except ValueError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # 注册表
 # ---------------------------------------------------------------------------
@@ -106,13 +122,27 @@ class AgentRegistry:
     """agent 档案库：注册 → 采集 → 分配 → 摘除。
 
     default_agent_id：降级目标（通用 LLM），注册时第一个注册的可用 agent。
+
+    刷新策略（TTL + 决策点校验）：
+    - 静态画像带 last_collected_at；超过 collect_ttl_seconds 视为过期
+    - 池级 `ensure_fresh()`：读时惰性刷新（仅对过期 agent 重新采集，
+      保证三级分配看到的池级数据不陈旧）
+    - 决策点 `validate_before_dispatch()`：派发前对选中的目标 agent
+      复核易变维度（resource/constraint），把校验锚定在真正要用数据的时刻
     """
 
-    def __init__(self, max_consecutive_failures: int = 3):
+    def __init__(
+        self,
+        max_consecutive_failures: int = 3,
+        collect_ttl_seconds: float = 300.0,
+        validate_on_dispatch: bool = True,
+    ):
         self._agents: dict[str, RegisteredAgent] = {}
         self._rr_counter: dict[str, int] = {}  # model → 轮询游标
         self._default_id: Optional[str] = None
         self.max_consecutive_failures = max_consecutive_failures
+        self.collect_ttl_seconds = collect_ttl_seconds
+        self.validate_on_dispatch = validate_on_dispatch
 
     # ---------- 注册 ----------
 
@@ -194,6 +224,91 @@ class AgentRegistry:
                 "error": str(e),
             }
 
+    async def _acollect_one(self, agent: RegisteredAgent, scope: str) -> dict:
+        """异步版单 agent 采集（AsyncScheduler 决策点校验用，不阻塞事件循环）。"""
+        request_id = f"info:{agent.agent_id}:{scope}:{_ts()}"
+        try:
+            result = await agent.adapter.arun_info(
+                scope=scope,
+                questions=INFO_QUESTIONS[scope],
+                request_id=request_id,
+            )
+            if not result.success:
+                raise RegistryError(
+                    result.error.code if result.error else "info 请求失败"
+                )
+            self._apply_declaration(agent, scope, result.output)
+            agent.last_collected_at = _ts()
+            return {
+                "agent_id": agent.agent_id,
+                "scope": scope,
+                "ok": True,
+                "output": result.output,
+            }
+        except Exception as e:  # 单点失败隔离：保留上次已知值，不中断整体
+            return {
+                "agent_id": agent.agent_id,
+                "scope": scope,
+                "ok": False,
+                "error": str(e),
+            }
+
+    # ---------- 刷新（TTL 惰性刷新 + 决策点校验） ----------
+
+    def is_stale(self, agent: RegisteredAgent) -> bool:
+        """画像是否超过 TTL（从未采集过视为过期）。"""
+        ts = _parse_ts(agent.last_collected_at)
+        if ts is None:
+            return True
+        return (time.time() - ts) >= self.collect_ttl_seconds
+
+    def ensure_fresh(self, agent_id: Optional[str] = None) -> list[dict]:
+        """池级 TTL 惰性刷新：仅对过期 agent 重新采集（新鲜则零网络开销）。
+
+        在"读"数据时调用（如池级匹配前），保证三级分配看到的池级画像不陈旧。
+        """
+        targets = [
+            a for a in self._agents.values()
+            if agent_id is None or a.agent_id == agent_id
+        ]
+        return [
+            self._collect_one(a, sc)
+            for a in targets if self.is_stale(a)
+            for sc in INFO_QUESTIONS
+        ]
+
+    async def aensure_fresh(self, agent_id: Optional[str] = None) -> list[dict]:
+        """异步版池级 TTL 刷新（AsyncScheduler 在 run 开始时调用）。"""
+        targets = [
+            a for a in self._agents.values()
+            if agent_id is None or a.agent_id == agent_id
+        ]
+        out: list[dict] = []
+        for a in targets:
+            if not self.is_stale(a):
+                continue
+            for sc in INFO_QUESTIONS:
+                out.append(await self._acollect_one(a, sc))
+        return out
+
+    def validate_before_dispatch(self, agent_id: str) -> list[dict]:
+        """决策点校验（同步）：派发前复核选中目标 agent 的易变维度。
+
+        只问 resource/constraint（派发决策真正依赖、且易变）；capability
+        变化慢且信息量大，交给池级 TTL。失败不阻塞派发——保留上次已知值。
+        """
+        if not self.validate_on_dispatch:
+            return []
+        agent = self._agents[agent_id]
+        return [self._collect_one(agent, sc) for sc in VOLATILE_SCOPES]
+
+    async def avalidate_before_dispatch(self, agent_id: str) -> list[dict]:
+        """决策点校验（异步）：AsyncScheduler 派发前调用，不阻塞事件循环。"""
+        if not self.validate_on_dispatch:
+            return []
+        agent = self._agents[agent_id]
+        return [await self._acollect_one(agent, sc) for sc in VOLATILE_SCOPES]
+
     def _apply_declaration(
         self,
         agent: RegisteredAgent,
@@ -220,17 +335,14 @@ class AgentRegistry:
             agent.rate_limit_per_min = int(_first_number(q(2)))
             agent.budget_limit_usd = _first_number(q(3))
         elif scope == "constraint":
-            # q1 是混合自由文本（如"工作时间 9点~18点；禁止访问外网"）：
-            # 时间窗短语归 time_windows，不扫入 forbidden——forbidden 是
-            # 约束匹配/审计/学习规则的输入，混入时间窗会污染判定口径；
-            # "无"（含空白变体）不计入任何一方
-            agent.time_windows = []
-            agent.forbidden = []
-            for t in _split_tags(q(1)):
-                if _is_time_window(t):
-                    agent.time_windows.append(t)
-                elif t != "无":
-                    agent.forbidden.append(t)
+            # q1 为自由文本（如"禁止访问外网；输出必须是JSON"）：逐标签入库；
+            # "无"（含空白变体）与空回答不计入。时间窗字段已废弃（无消费方，
+            # 见 _looks_like_time_window），误入的时间窗文本在此剔除——forbidden
+            # 是约束匹配/审计/学习规则的输入，混入时间窗会污染判定口径
+            agent.forbidden = [
+                t for t in _split_tags(q(1))
+                if t != "无" and not _looks_like_time_window(t)
+            ]
             agent.languages = _split_tags(q(2))
 
     # ---------- 分配（三级策略 + 多实例轮询） ----------

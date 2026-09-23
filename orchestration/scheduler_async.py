@@ -140,6 +140,9 @@ class AsyncScheduler:
             ctx.results = dict(seed.get("results") or {})
         self._live[run_id] = ctx
         try:
+            # 池级 TTL 刷新：run 开始前把过期画像刷一遍（新鲜则零开销），
+            # 保证三级分配基于的池级数据不陈旧
+            await self._registry.aensure_fresh()
             return await self._run_loop(ctx, dag, cancel_event)
         finally:
             self._live.pop(run_id, None)  # 异常路径也注销，不留幽灵 live 状态
@@ -173,6 +176,12 @@ class AsyncScheduler:
                     if tid in pending:
                         continue
                     assignment, adapter = self._registry.assign(dag.tasks[tid])
+                    # 决策点校验：派发前复核选中目标 agent 的易变维度
+                    # （resource/constraint）——把刷新锚定在真正要用数据的
+                    # 时刻；失败保留上次已知值，不阻塞派发
+                    await self._registry.avalidate_before_dispatch(
+                        assignment.agent_id
+                    )
                     ctx.assignments[tid] = assignment
                     ctx.task_agent[tid] = assignment.agent_id
                     if not self._has_quota(assignment):  # 并发上限（非阻塞）

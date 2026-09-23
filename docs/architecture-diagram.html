@@ -236,7 +236,7 @@
           <div class="badge" style="--cc:#0f766e">资源</div>
           <div class="card-main">
             <div class="card-title">Agent 注册表 <span class="path">orchestration/registry.py</span></div>
-            <div class="card-desc">能力是问出来的，不是配出来的：info_request 采集 capability / resource / constraint 声明入库（单点失败隔离）。三级分配全程留痕：exact（同 model 多实例轮询）→ capability（部分覆盖标 risk）→ degraded（降级通用 LLM）。连续任务失败达阈值自动摘除。</div>
+            <div class="card-desc">能力是问出来的，不是配出来的：info_request 采集 capability / resource / constraint 声明入库（单点失败隔离）。刷新策略 = TTL 惰性刷新 + 决策点校验（池级过期即刷、派发前复核易变维度）。三级分配全程留痕：exact（同 model 多实例轮询）→ capability（部分覆盖标 risk）→ degraded（降级通用 LLM）。连续任务失败达阈值自动摘除。</div>
             <div class="chips"><span>exact 精确匹配</span><span>capability 能力匹配</span><span>degraded 降级留痕</span><span>失败摘除</span></div>
           </div>
         </div>
@@ -394,7 +394,7 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v1.3 · 2026-09-07 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固（拆解 → 资源协调 → 并发调度 → 治理学习 → 崩溃恢复）· 224/224 测试全绿
+  <b>Agents Orchestration</b> · 架构 v1.4 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固（拆解 → 资源协调 → 并发调度 → 治理学习 → 崩溃恢复）· 232/232 测试全绿
 </footer>
 
 </div>
