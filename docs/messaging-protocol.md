@@ -34,9 +34,9 @@
 
 > 取消不是第三类请求——它是任务请求的 `action` 变体，保持"agent 只接收两类请求"的表述成立。
 
-> **边界澄清**：规划层的**目标拆解**（`orchestration/decomposer.py`，目标 → DAG）由框架直接调用自己的底层 LLM，**不经过本协议**——拆解是框架内部组件，不在"框架 ↔ agent"这条边界上。本协议约束的只有与 agent 通信的这一面。
+> **边界澄清**：规划层的**目标拆解**（目标 → DAG）由框架直接调用自己的底层 LLM，**不经过本协议**——拆解是框架内部组件，不在"框架 ↔ agent"这条边界上。本协议约束的只有与 agent 通信的这一面。
 >
-> 与之相对，治理层的**反思/判定**（`orchestration/reflection.py`，最终交付 × 原始目标 → 判定结论）**就是本协议的一次普通 `task_request`**——判定能力同样是"问出来的能力"（`judge` / `reviewer` 由 info_request 采集），判定 agent 与执行 agent 同构、零变更；因此**协议不新增消息类型**（无 judge_request 之类），判定输出复用结果契约、受 §7.2 output_schema 强校验与 §7.3 解析重试约束。
+> 与之相对，治理层的**反思/判定**（最终交付 × 原始目标 → 判定结论）**就是本协议的一次普通 `task_request`**——判定能力同样是"问出来的能力"（`judge` / `reviewer` 由 info_request 采集），判定 agent 与执行 agent 同构、零变更；因此**协议不新增消息类型**（无 judge_request 之类），判定输出复用结果契约、受 §7.2 output_schema 强校验与 §7.3 解析重试约束。
 
 ---
 
@@ -95,8 +95,8 @@
 
 > **usage / duration_ms 字段说明（2026-08-15 冒烟实测修正）**：
 > 真实 LLM 不会自报 token / 成本 / 耗时（实测 DeepSeek 输出全 0）。这两个字段的
-> **真实值由适配器层从 API 响应捕获并回填**（`AgentAdapter._post_process` 钩子，
-> 见 adapters/deepseek.py），agent 自报仅作兜底、且以 API 真实值为准。简化版模板下
+> **真实值由执行层适配器在解析完成后从模型 API 响应捕获并回填**，agent 自报仅作兜底、
+> 且以 API 真实值为准。简化版模板下
 > 缺失时（=0）审计按"未知"处理，不误判超支。
 
 - 任务请求：output 按 output_schema 给出结果
@@ -126,7 +126,7 @@
 {"request_id":"req_0001","task_id":"task_001","success":true,"output":{},"说明":"我完成了"}
 ```
 
-> 此模板即协议全部内容。框架侧将其作为 `PROTOCOL_PROMPT_FULL` 常量维护（另有简化版 `PROTOCOL_PROMPT_SIMPLE`，档位由框架按 agent model 配置，见 §7.8），每次请求 = 模板 + 具体请求 JSON 拼接后发给 agent。
+> 此模板即协议全部内容。框架侧以**完整版**与**简化版**两个模板维护（档位按 agent model 配置，见 §7.8）；每次请求 = 模板 + 具体请求 JSON 拼接后发给 agent。
 
 ---
 
@@ -366,4 +366,4 @@ agent → 框架：
 4. **副作用责任在 agent**：结果契约的 `side_effect_report` 是剪枝 / 审计判断的唯一依据，agent 须如实声明。
 5. **协议不包含 agent → 框架的主动消息**：agent 有任何异常只能通过响应的 `success=false` + `error` 表达——框架不监听、不轮询。
 6. **判定（反思）不是新的协议面**：治理层的运行级判定复用 `task_request`（§4.1）——`task_desc` 放判定指令、`inputs` 放目标与交付证据、`output_schema` 放判定结构（`achieved` / `score` / `reasons` / `gaps`）。它不引入新消息类型，不要求 agent 做任何适配；判定结论是 **advisory**（不改任务状态、不阻断交付），与框架的确定性审计分离留痕。
-7. **传输层默认 OpenAI 兼容 HTTP 端点**：本协议只定义"说什么"（模板 + 请求 JSON）；"怎么送"由适配器决定。默认形态是 agent 暴露 OpenAI 兼容的 chat completions HTTP 端点（事实标准，OpenAI / DeepSeek / vLLM / Ollama / 自建 agent 均可导出）——兼容端点即配置接入（`base_url + api_key + model`），框架零代码；不兼容的自建系统才需要写 adapter（实现 `_call_llm` 一个方法），协议装配 / 双层校验 / 重试 / 成本回填由基类复用。协议内容与传输层解耦：换传输（gRPC / 消息队列 / 本地进程）只动 adapter 一个点，模板与请求 JSON 不变（架构文档 §3.3）。
+7. **传输层默认 OpenAI 兼容 HTTP 端点**：本协议只定义"说什么"（模板 + 请求 JSON）；"怎么送"由适配器决定。默认形态是 agent 暴露 OpenAI 兼容的 chat completions HTTP 端点（事实标准，OpenAI / DeepSeek / vLLM / Ollama / 自建 agent 均可导出）——兼容端点即配置接入（`base_url + api_key + model`），框架零代码；不兼容的自建系统才需要写适配器（只需实现一个发起调用的扩展点），协议装配 / 双层校验 / 重试 / 成本回填由适配器基类统一复用。协议内容与传输层解耦：换传输（gRPC / 消息队列 / 本地进程）只动 adapter 一个点，模板与请求 JSON 不变（架构文档 §3.3）。

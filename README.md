@@ -21,15 +21,15 @@
 | **目标即入口** | 一句自然语言目标 → 规划层拆解为任务 DAG →（可选）直接提交执行：网关 `POST /api/decompose` / CLI `ao decompose --submit`，"目标 → 结果"一条链；拆解是框架内部 LLM 调用，**不走消息协议** |
 | **依赖分析独立** | `DAG → DependencyGraph` 纯结构视图：成环检测 / 拓扑序 / **拓扑分层（并行前沿）** / 最大并行宽度 / 反向可达（剪枝判据）；`/api/decompose` 直接回 `analysis`（分层 + 并行宽度），规划层这一环有真实产物 |
 | **提示词即协议** | 与 agent 的唯一沟通方式是格式化提示词模板 + JSON 请求（`task_request` / `info_request`）；agent 零适配，协议演进仅需修改模板文本 |
-| **零成本接入** | agent 暴露 OpenAI 兼容 chat completions 端点即可接入（DeepSeek / vLLM / Ollama / 自研），注册表配置即完成；同进程 Python agent 免 HTTP（`InProcessAdapter` 直调本地函数）；不兼容的自建系统仅需实现一个 `_call_llm` 方法 |
-| **配置驱动注册** | `AgentRegistry.from_config(agents.yaml)` 批量注册 N 个 agent——只写"agent 在哪、叫什么模型"，能力 / 并发 / 预算声明由 `info_request` 自动问出；`api_key_env` 从环境变量取密钥 |
+| **零成本接入** | agent 暴露 OpenAI 兼容 chat completions 端点即可接入（DeepSeek / vLLM / Ollama / 自研），注册表配置即完成；同进程 Python agent 免 HTTP（进程内适配器直调本地函数）；不兼容的自建系统仅需实现一个发起调用的扩展点 |
+| **配置驱动注册** | 注册表可由配置文件批量注册 N 个 agent——只写"agent 在哪、叫什么模型"，能力 / 并发 / 预算声明由 `info_request` 自动问出；`api_key_env` 从环境变量取密钥 |
 | **CLI 运维入口** | 网关瘦客户端 `ao`（仅标准库 urllib）：目标拆解 / 提交 DAG / 进度 / 报告 / 指标 / 取消 / 断点恢复 / 人工 resolve / agent 档案 / **学习层经验库**（`ao lessons`），一条命令完成运维与人工出口 |
-| **资源统计与分配** | 通过 `info_request` 采集 agent 能力 / 限制声明入库（**规划层 `AgentPool`**）；三级分配策略：精确匹配 → 能力匹配 → 降级兜底，全程留痕，失败摘除（**调度层 `Allocator`**）——按六层架构物理分文件，`AgentRegistry` 为组合门面 |
+| **资源统计与分配** | 通过 `info_request` 采集 agent 能力 / 限制声明入库（**规划层资源统计器**）；三级分配策略：精确匹配 → 能力匹配 → 降级兜底，全程留痕，失败摘除（**调度层资源协调器**）——按六层架构物理分文件，注册表为组合门面 |
 | **失败处理** | 自动重试 → 失败传播 → 反向可达性剪枝（死任务消除）；并发场景下竞态安全（先冻结派发，再逐级取消，晚到结果丢弃） |
 | **框架侧超时封顶** | 单次尝试超过 `required_resources.timeout` 由框架强制中断（不依赖 agent 履约），agent 挂死不再永久占住并发槽；超时汇入既有重试/剪枝链路 |
 | **并发调度** | asyncio 事件驱动并发派发；per-agent 并发上限与速率配额强制执行；单实例可并发运行多个 DAG，状态隔离 |
 | **治理闭环** | 结果审计（对账 / 分配审计 / 剪枝审计 / 语义交叉校验——**只读、可复跑、确定性**）+ 反思/判定（目标达成度，非确定、成本单列、与审计分离留痕）+ 成本核算（含失败成本与剪枝沉没成本），三件套在 run 收尾时自动产出并进报告 |
-| **学习层闭环** | 确定性复盘 → 规则提取（证据强度分级：`objective` 确定性事实 / `judgment` LLM 判定，**禁止同级呈现**）→ **跨 run 经验库落盘**（SQLite，同 rule 累计命中次数与贡献 run 数）→ **回馈拆解提示词**：`Decomposer(guidance_provider=)` 注入指导块（注册表实测的可用模型/能力标签 + **跨 run 复现**的返工事实，每条带数值支撑）；`GET /api/lessons` / `ao lessons` 查看经验库 |
+| **学习层闭环** | 确定性复盘 → 规则提取（证据强度分级：`objective` 确定性事实 / `judgment` LLM 判定，**禁止同级呈现**）→ **跨 run 经验库落盘**（SQLite，同 rule 累计命中次数与贡献 run 数）→ **回馈拆解提示词**：拆解引擎的经验注入接口在固定指令与用户目标之间插入指导块（注册表实测的可用模型 / 能力标签 + **跨 run 复现**的返工事实，每条带数值支撑）；`GET /api/lessons` / `ao lessons` 查看经验库 |
 | **可观测性** | 结构化日志（key=value）+ 指标聚合，直接供给审计器与学习引擎 |
 | **API 网关** | 框架以系统形态对外服务：目标拆解 / 提交 DAG / 查询进度 / 获取报告 / 取消运行 / agent 档案快照 / **跨 run 经验库**（`GET /api/lessons`） |
 
@@ -59,17 +59,17 @@ pip install -e ".[dev,gateway]"   # 开发安装（含测试与网关依赖）
 | `dev` | 运行测试 | `pytest` |
 | `gateway` | API 网关（FastAPI 服务） | `fastapi`, `uvicorn` |
 
-> 最小运行环境仅需 `pydantic>=2.0`、`openai>=1.0`、`pyyaml>=6.0`（`pip install .` 即可；YAML 注册仅在用到 `from_config(yaml)` 时需要）。
+> 最小运行环境仅需 `pydantic>=2.0`、`openai>=1.0`、`pyyaml>=6.0`（`pip install .` 即可；YAML 注册仅在用到配置文件批量注册时需要）。
 
 ## 配置凭据
 
-`DeepSeekAdapter` 默认从环境变量读取 API key，无需写入代码：
+DeepSeek 适配器默认从环境变量读取 API key，无需写入代码：
 
 ```bash
 export DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
 ```
 
-也可在构造时显式传入：`DeepSeekAdapter(api_key="...", base_url="...")`。`base_url` 可指向任意 OpenAI 兼容端点——这是接入自有 agent 的入口（见下文"Agent 接入"）。
+也可在构造适配器时显式传入 `api_key` / `base_url`（构造参数名同下）。`base_url` 可指向任意 OpenAI 兼容端点——这是接入自有 agent 的入口（见下文"Agent 接入"）。
 
 ---
 
@@ -134,7 +134,7 @@ asyncio.run(main())
 
 ### 3. 治理层消费
 
-调度产生的 `ScheduleReport` 可直接供给治理三件套——审计、成本、学习：
+调度产生的运行报告可直接供给治理三件套——审计、成本、学习：
 
 ```python
 from orchestration.audit import Auditor
@@ -202,9 +202,9 @@ curl -X POST http://localhost:8000/api/decompose \
 # → {"goal": "...", "status": "submitted", "dag": {...}, "run_id": "..."}
 ```
 
-> 拆解引擎由 `create_app(..., decomposer=make_default_decomposer())` 注入（默认复用 DeepSeek，key 读 `$DEEPSEEK_API_KEY`）；未注入时该端点返回 400，其余功能不受影响。`ao serve` 会自动装配（`--decompose-model` / `--no-decompose` 可调）。
+> 拆解引擎由应用构造时注入（默认复用 DeepSeek，key 读 `$DEEPSEEK_API_KEY`）；未注入时该端点返回 400，其余功能不受影响。`ao serve` 会自动装配（`--decompose-model` / `--no-decompose` 可调）。
 >
-> **反思/判定**由 `create_app(..., reflector=Reflector(registry))` 注入（`ao serve` 自动装配，`--no-reflect` 可关）：提交带 `goal` 的 run 收尾后按原始目标判定交付，结论进报告的 `reflection` 字段。想让判定独立可信，注册一个声明 `judge` 能力的 agent（可用异构模型）——能力由 `info_request` 采集，无需额外配置；没有这类 agent 时降级自判并在报告中标记 `independent=false`。判定是 advisory，不改状态、不阻断交付。
+> **反思/判定**同样由应用构造时注入（`ao serve` 自动装配，`--no-reflect` 可关）：提交带 `goal` 的 run 收尾后按原始目标判定交付，结论进报告的 `reflection` 字段。想让判定独立可信，注册一个声明 `judge` 能力的 agent（可用异构模型）——能力由 `info_request` 采集，无需额外配置；没有这类 agent 时降级自判并在报告中标记 `independent=false`。判定是 advisory，不改状态、不阻断交付。
 
 ### 4.1 断点恢复（进程崩溃后继续）
 
@@ -313,7 +313,7 @@ export DEEPSEEK_API_KEY=sk-...
 框架以客户端身份调用**本地 mock agent 服务**（`scripts/mock_agents.py`，OpenAI 兼容 chat completions 端点），传输层与真实 agent 完全一致（协议装配 → HTTP → 解析），差异仅在业务应答为脚本化：
 
 - 4 个角色 agent（translator / coder / analyst / flaky）+ 11 任务 DAG
-- 覆盖：三级分配留痕（exact / capability / degraded）、能力不覆盖 risk 标记、解析层杂文兜底重试、任务重试耗尽 → 连续失败摘除 → 降级回退、反向可达剪枝（独立交付分支不误杀）、per-agent 并发上限真实生效（HTTP 并发峰值 ≤ 声明值）、usage 真实回填、审计 / 成本 / 学习
+- 覆盖：三级分配留痕（exact / capability / degraded）、能力不覆盖 risk 标记、解析组件杂文兜底重试、任务重试耗尽 → 连续失败摘除 → 降级回退、反向可达剪枝（独立交付分支不误杀）、per-agent 并发上限真实生效（HTTP 并发峰值 ≤ 声明值）、usage 真实回填、审计 / 成本 / 学习
 - mock 支持确定性故障注入（HTTP 500 / 杂文 / 业务失败），独立运行：`.venv/bin/python scripts/mock_agents.py`
 - 可视化报告（DAG 执行全景图 / 三级分配留痕 / 失败传播 / 治理三栏）：`.venv/bin/python scripts/smoke_multiagent.py --visual`，示例报告见 [docs/demo/smoke_multiagent_report.html](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/demo/smoke_multiagent_report.html)
 
@@ -332,7 +332,7 @@ export DEEPSEEK_API_KEY=sk-...       # 拆解引擎用真实 LLM；agent 侧仍�
 .venv/bin/python scripts/smoke_reflection.py
 ```
 
-覆盖链路：真实 HTTP 采集 `judge` 能力 → 提交带 `goal` 的 run（mock agents 真实 HTTP 执行）→ 收尾判定（`DeepSeekAdapter` 真实 HTTP 打独立判定角色：协议装配 → output_schema 强校验 → usage 真实回填）→ 结论进报告 + 学习层 `JUD-1` 触发。同时验证 advisory 边界：判定不改任务状态、成本单列不计入任务总成本、无 `goal` 的 run 跳过判定（`skipped_reason=no_goal`）。12/12 断言通过。
+覆盖链路：真实 HTTP 采集 `judge` 能力 → 提交带 `goal` 的 run（mock agents 真实 HTTP 执行）→ 收尾判定（适配器真实 HTTP 打独立判定角色：协议装配 → output_schema 强校验 → usage 真实回填）→ 结论进报告 + 学习层 `JUD-1` 触发。同时验证 advisory 边界：判定不改任务状态、成本单列不计入任务总成本、无 `goal` 的 run 跳过判定（`skipped_reason=no_goal`）。12/12 断言通过。
 
 ### 9. 学习层闭环冒烟（无需 API key）
 
@@ -364,8 +364,8 @@ registry.register(
 ```
 
 - **兼容端点** → 配置即接入，框架零代码
-- **不兼容的自建系统** → 继承 `AgentAdapter` 实现 `_call_llm`（约 20 行），协议装配、双层校验、重试、成本回填由基类统一复用
-- **同进程 Python agent（函数 / 类 / 脚本）** → `InProcessAdapter` 直调本地函数，免 HTTP 传输（序列化 + 网络往返只为调一个本地函数是纯开销）。协议约束（输出合法 JSON）由基类解析组件照样强制，稳定性兜底一个不少：
+- **不兼容的自建系统** → 继承适配器基类实现一个发起调用的扩展点（约 20 行），协议装配、双层校验、重试、成本回填由基类统一复用
+- **同进程 Python agent（函数 / 类 / 脚本）** → 进程内适配器直调本地函数，免 HTTP 传输（序列化 + 网络往返只为调一个本地函数是纯开销）。协议约束（输出合法 JSON）由解析组件照样强制，稳定性兜底一个不少：
 
 ```python
 from orchestration.adapters.inprocess import InProcessAdapter
@@ -379,7 +379,7 @@ registry = AgentRegistry()
 registry.register(InProcessAdapter(my_agent, model="local-helper"), agent_id="local")
 ```
 
-- **N 个 agent 批量注册** → `AgentRegistry.from_config(agents.yaml / agents.json / dict)`（见 4.2），程序内等价用法：
+- **N 个 agent 批量注册** → 注册表可由 YAML / JSON / 字典配置批量构建（见 4.2），程序内等价用法：
 
 ```python
 from orchestration.registry import AgentRegistry
@@ -414,7 +414,7 @@ agents-orchestration/
 │   ├── validation.py        # 解析组件：双层校验（提取 → 信封 Schema + output_schema 强校验 → 重试）
 │   ├── timeouts.py          # 框架侧 wall-clock 超时原语（任务执行 / info 采集共用）
 │   ├── decomposer.py        # 任务拆解：目标 → 依赖 DAG（含能力需求声明）
-│   ├── registry.py          # Agent 注册表门面：组合规划层 AgentPool + 调度层 Allocator（零逻辑转发）
+│   ├── registry.py          # Agent 注册表门面：组合规划层资源统计器 + 调度层资源协调器（零逻辑转发）
 │   ├── scheduler.py         # 同步调度器：拓扑派发 + 失败传播 + 剪枝
 │   ├── scheduler_async.py   # 异步并发调度器：并发派发 + 竞态处理 + 资源限制
 │   ├── metrics.py           # 可观测性：指标聚合 + 结构化日志
@@ -450,7 +450,7 @@ pip install -e ".[dev,gateway]"
 pytest        # 435/435 全绿
 ```
 
-测试覆盖重点：依赖分析（拓扑分层/并行前沿/可达性/成环与引用校验，23 项）、层职责切分（规划层 `AgentPool` × 调度层 `Allocator`）、解析组件（最严格模块，47 项：信封校验 + output_schema 强校验 + 重试兜底）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内 adapter（str/dict 返回、解析重试、免 HTTP 全流程）、`from_config` 批量注册（YAML/JSON/环境变量取 key/自定义工厂）、采集侧 wall-clock 超时、学习层闭环（证据分级 / 经验库落盘与跨 run 聚合 / 复现门槛 / 提示词注入与客观-判定分离，43 项）、CLI 学习层出口（报告打印审计/成本/学习 + `ao lessons`，5 项）。
+测试覆盖重点：依赖分析（拓扑分层/并行前沿/可达性/成环与引用校验，23 项）、层职责切分（规划层资源统计器 × 调度层资源协调器）、解析组件（最严格模块，47 项：信封校验 + output_schema 强校验 + 重试兜底）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内适配器（str/dict 返回、解析重试、免 HTTP 全流程）、配置批量注册（YAML/JSON/环境变量取 key/自定义工厂）、采集侧 wall-clock 超时、学习层闭环（证据分级 / 经验库落盘与跨 run 聚合 / 复现门槛 / 提示词注入与客观-判定分离，43 项）、CLI 学习层出口（报告打印审计/成本/学习 + `ao lessons`，5 项）。
 
 ---
 
