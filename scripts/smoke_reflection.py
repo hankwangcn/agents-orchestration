@@ -121,7 +121,7 @@ async def main() -> int:
                              f"judge={ref['cost']}"))
 
         print("\n== 4. 判定结论喂学习层 ==")
-        audit = Auditor(registry).audit(report)
+        audit = Auditor().audit(report)
         cost = CostAccountant(registry).account(report)
         learned = LearningEngine().learn(audit, cost, _to_report(ref))
         print(f"   learning rules = {[r.rule_id for r in learned.rules]}")

@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/hankwangcn/agents-orchestration/blob/main/LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-468%2F468%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
+[![Tests](https://img.shields.io/badge/tests-471%2F471%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不观测 agent 内部状态。**
 
@@ -28,10 +28,10 @@
 | **失败处理** | 自动重试 → 失败传播 → 反向可达剪枝（失效任务消除）；并发场景下竞态安全（先冻结派发，再逐级取消，迟到结果丢弃） |
 | **框架侧超时封顶** | 单次尝试超过 `required_resources.timeout` 时由框架强制中断（不依赖 agent 配合），agent 无响应不再长期占用并发名额；超时汇入既有重试与剪枝链路 |
 | **并发调度** | asyncio 事件驱动并发派发；按 agent 的并发上限与速率配额强制执行；单实例可并发运行多个任务图，状态隔离 |
-| **治理闭环** | 结果审计（对账、分配审计、剪枝审计、语义交叉校验，只读、可复跑、确定性）与反思 / 判定（目标达成度，非确定、成本单列、与审计分离记录）、成本核算（含失败成本与剪枝沉没成本），三项在运行收尾时自动产出并进入报告 |
+| **治理闭环** | 结果审计（对账、分配审计、剪枝审计、语义交叉校验，只读、纯函数、结论可重复（可重放））与反思 / 判定（目标达成度，非确定、成本单列、与审计分离记录）、成本核算（含失败成本与剪枝沉没成本），三项在运行收尾时自动产出并进入报告 |
 | **学习层闭环** | 确定性复盘 → 规则提取（证据强度分级：客观为确定性事实，判定为大模型结论，禁止同级呈现）→ 跨运行经验库落盘（SQLite，同一规则累计命中次数与贡献运行数）→ 拆解提示词回馈：拆解引擎的经验注入接口在固定指令与用户目标之间插入指导块（注册表实测的可用模型与能力标签，以及达到复现门槛的返工事实，每条附数值依据）；`GET /api/lessons` 与 `ao lessons` 可查看经验库 |
 | **运行存档（归档）** | 运行存档由过程事件流（状态变更逐条落盘，可回放时间线）与终态报告（治理与学习产物附载）构成，落在持久化底座、单次运行不可变——即框架的唯一权威来源；报告可读回（进程重启后仍可获取），运行可枚举（`GET /api/runs` / `ao runs`），跨进程重启后仍可查阅 |
-| **接入层 Web 页面** | 服务端渲染的 Web 页面（同源、零构建、零跨域）：`GET /` 运行列表与 `GET /runs/{id}` 运行详情，完整呈现执行过程（过程时间线、任务与结果、分配记录、失败传播、治理结论、学习规则）。人读版是运行存档的读时投影（按需渲染、确定性、可复跑），不落盘为第二份真相 |
+| **接入层 Web 页面** | 服务端渲染的 Web 页面（同源、零构建、零跨域）：`GET /` 运行列表与 `GET /runs/{id}` 运行详情，完整呈现执行过程（过程时间线、任务与结果、分配记录、失败传播、治理结论、学习规则）。人读版是运行存档的读时投影（按需渲染、确定性、可重放），不落盘为第二份真相 |
 | **叙述摘要（非确定）** | `POST /api/runs/{id}/narrative` / `ao narrate`：由大模型产出的段落式人读总结——显式触发、单独留档、标注来源，不默认生成、不混入确定性报告（原则与"判定与审计分离"一致） |
 | **可观测性** | 结构化日志（key=value）与指标聚合，直接供给审计器与学习引擎 |
 | **API 网关** | 框架以系统形态对外服务：目标拆解、任务图提交、进度查询、报告获取、运行枚举、人读投影、运行取消、agent 档案快照与跨运行经验库 |
@@ -316,9 +316,9 @@ ao view <run_id>              # 运行存档人读视图（完整过程 + 治理
 ao narrate <run_id>           # 显式生成叙述摘要（大模型，非确定；需叙述引擎）
 ```
 
-对应的只读 JSON 端点：`GET /api/runs`（枚举）、`GET /api/runs/{id}/view`（确定性投影，可复跑）、`POST /api/runs/{id}/narrative`（非确定，大模型产出、单独留档、不默认生成）。
+对应的只读 JSON 端点：`GET /api/runs`（枚举）、`GET /api/runs/{id}/view`（确定性投影，可重放）、`POST /api/runs/{id}/narrative`（非确定，大模型产出、单独留档、不默认生成）。
 
-> **三分离**：运行存档（过程与终态）为不可变权威来源；人读投影为确定性渲染；叙述摘要为非确定的大模型产出。前两者可复跑、零成本，后者显式触发、标注来源、不混入。示例见 [docs/demo/web_run_demo.html](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/demo/web_run_demo.html)。
+> **三分离**：运行存档（过程与终态）为不可变权威来源；人读投影为确定性渲染；叙述摘要为非确定的大模型产出。前两者可重放、零成本，后者显式触发、标注来源、不混入。示例见 [docs/demo/web_run_demo.html](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/demo/web_run_demo.html)。
 
 ### 5. 真实模型端到端冒烟
 
@@ -374,7 +374,7 @@ export DEEPSEEK_API_KEY=sk-...       # 拆解引擎使用真实模型；agent �
 .venv/bin/python scripts/smoke_archive.py --demo-dir out/    # 另写出 Web 演示页
 ```
 
-覆盖链路：真实网关与真实 CLI；一次运行（含失败、剪枝、降级）→ 过程事件流逐条落盘（首尾为启动与收尾事件，含派发、完成、剪枝）→ 运行枚举（`/api/runs`、`ao runs`）→ 人读投影（`/api/runs/{id}/view`，同一份存档两次调用逐字节一致，即确定性可复跑）→ 叙述摘要（默认空 → 显式 `POST /narrative` → 标注来源与确定性标记 → 单独留档并进入视图独立字段）→ Web 页面（`/` 含运行链接、`/runs/{id}` 含过程时间线、任务与学习规则，未知运行走 HTML 错误页）→ 真实 CLI `ao runs` 与 `ao view`。示例页见 [docs/demo/web_run_demo.html](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/demo/web_run_demo.html)。
+覆盖链路：真实网关与真实 CLI；一次运行（含失败、剪枝、降级）→ 过程事件流逐条落盘（首尾为启动与收尾事件，含派发、完成、剪枝）→ 运行枚举（`/api/runs`、`ao runs`）→ 人读投影（`/api/runs/{id}/view`，同一份存档两次调用逐字节一致，即结论可重复（可重放））→ 叙述摘要（默认空 → 显式 `POST /narrative` → 标注来源与确定性标记 → 单独留档并进入视图独立字段）→ Web 页面（`/` 含运行链接、`/runs/{id}` 含过程时间线、任务与学习规则，未知运行走 HTML 错误页）→ 真实 CLI `ao runs` 与 `ao view`。示例页见 [docs/demo/web_run_demo.html](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/demo/web_run_demo.html)。
 
 ---
 
@@ -474,7 +474,7 @@ agents-orchestration/
 │   ├── smoke_learning.py     # 学习层闭环冒烟（复盘 → 经验库落盘 → 回馈拆解提示词）
 │   ├── smoke_archive.py      # 运行存档与 Web 页面冒烟（事件流 → 人读投影 → Web / 叙述）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 468 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 反思判定 / 学习闭环 / 运行存档 / Web / 并发 / 网关 / 断点 / CLI / 适配器）
+├── tests/                   # 471 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 反思判定 / 学习闭环 / 运行存档 / Web / 并发 / 网关 / 断点 / CLI / 适配器）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告 + Web 页面示例
 └── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
@@ -485,10 +485,10 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 468/468 全绿
+pytest        # 471/471 全绿
 ```
 
-测试覆盖重点：依赖分析（拓扑分层、并行前沿、可达性、成环与引用校验，23 项）、层职责切分（规划层资源统计器与调度层资源协调器）、解析组件（最严格模块，47 项：信封校验、输出结构强校验与重试容错）、剪枝算法（反向可达、多交付点语义）、并发竞态、速率限制、治理三项（审计 / 成本 / 学习）、网关生命周期、断点恢复（A+B 策略）、CLI 命令与请求构造、交互式会话（运行标识记忆、引导式提交、错误不退出）、进程内适配器（str 与 dict 返回、解析重试、免 HTTP 全流程）、配置批量注册（YAML / JSON / 环境变量取 key / 自定义工厂）、采集侧墙钟超时、学习层闭环（证据分级、经验库落盘与跨运行聚合、复现门槛、提示词注入与客观 - 判定分离，43 项）、CLI 学习层出口（报告打印审计 / 成本 / 学习与 `ao lessons`，5 项）、运行存档（事件流、报告读回、运行枚举、叙述留档、级联清理与底座退化，10 项）、人读投影（确定性、结构、转义、运行中投影、HTML 渲染，10 项）、网关存档与 Web（过程事件流落盘、重启后报告读回、运行枚举与投影端点、Web 页面、叙述端点与故障映射，9 项）、CLI 存档出口（`ao runs` / `ao view` / `ao narrate`，4 项）。
+测试覆盖重点：依赖分析（拓扑分层、并行前沿、可达性、成环与引用校验，23 项）、层职责切分（规划层资源统计器与调度层资源协调器）、解析组件（最严格模块，47 项：信封校验、输出结构强校验与重试容错）、剪枝算法（反向可达、多交付点语义）、并发竞态、速率限制、治理三项（审计 / 成本 / 学习）、审计输入封闭性（引用透明、结论可重放）、网关生命周期、断点恢复（A+B 策略）、CLI 命令与请求构造、交互式会话（运行标识记忆、引导式提交、错误不退出）、进程内适配器（str 与 dict 返回、解析重试、免 HTTP 全流程）、配置批量注册（YAML / JSON / 环境变量取 key / 自定义工厂）、采集侧墙钟超时、学习层闭环（证据分级、经验库落盘与跨运行聚合、复现门槛、提示词注入与客观 - 判定分离，43 项）、CLI 学习层出口（报告打印审计 / 成本 / 学习与 `ao lessons`，5 项）、运行存档（事件流、报告读回、运行枚举、叙述留档、级联清理与底座退化，10 项）、人读投影（确定性、结构、转义、运行中投影、HTML 渲染，10 项）、网关存档与 Web（过程事件流落盘、重启后报告读回、运行枚举与投影端点、Web 页面、叙述端点与故障映射，9 项）、CLI 存档出口（`ao runs` / `ao view` / `ao narrate`，4 项）。
 
 ---
 

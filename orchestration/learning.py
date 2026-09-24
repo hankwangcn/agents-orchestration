@@ -10,8 +10,8 @@ ReflectionReport（治理层反思/判定结论——目标是否达成）。
 
 **证据强度分级（客观性分层）**：规则按来源分两级，禁止同级呈现——
 - ``objective``：确定性事实（审计对账 / 分配留痕 / 成本核算 / 剪枝统计），
-  只读、可复跑；**只有这一级可以作为提示词的硬性指导**；
-- ``judgment``：LLM 判定结论（JUD-*），非确定、有成本、不可复跑；只作
+  只读、纯函数、结论可重复；**只有这一级可以作为提示词的硬性指导**；
+- ``judgment``：LLM 判定结论（JUD-*），非确定、有成本、不可重放；只作
   参考随附，不得伪装成事实。
 
 纯规则引擎，不做 LLM 复盘——可观测、可测试。
@@ -36,7 +36,7 @@ OBJECTIVE_CATEGORIES: frozenset[str] = frozenset({
     "pruning_quality",      # PRU-1：剪枝统计
 })
 
-# 判定（LLM）来源的规则类别：非确定，有成本，不可复跑
+# 判定（LLM）来源的规则类别：非确定，有成本，不可重放
 JUDGMENT_CATEGORIES: frozenset[str] = frozenset({
     "goal_mismatch",  # JUD-1：目标未达成
     "reflection",     # JUD-2：判定未产出结论

@@ -194,7 +194,7 @@
         <div class="card" style="--cc:#0284c7; --lc:#0284c7">
           <div class="card-title"><span class="mk"></span>Web 页面</div>
           <div class="card-fn"><span class="tag">核心功能</span>运行存档的人读界面，完整呈现一次运行的执行过程。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>服务端渲染，同源、零构建、零跨域；含运行列表 <span class="path">GET /</span> 与运行详情 <span class="path">GET /runs/{id}</span>，详情呈现过程时间线、任务与结果、分配记录、失败传播、治理结论与学习规则。人读版是运行存档的读时投影——按需渲染、纯函数（同一份存档渲染同一份视图，可复跑、零成本），不落盘为第二份真相。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>服务端渲染，同源、零构建、零跨域；含运行列表 <span class="path">GET /</span> 与运行详情 <span class="path">GET /runs/{id}</span>，详情呈现过程时间线、任务与结果、分配记录、失败传播、治理结论与学习规则。人读版是运行存档的读时投影——按需渲染、纯函数（同一份存档渲染同一份视图，可重放、零成本），不落盘为第二份真相。</div>
         </div>
 
         <div class="card" style="--cc:#0284c7; --lc:#0284c7">
@@ -368,7 +368,7 @@
         <div class="card" style="--cc:#be185d; --lc:#be185d">
           <div class="card-title"><span class="mk"></span>结果审计器</div>
           <div class="card-fn"><span class="tag">核心功能</span>对结果契约与调度事实执行确定性对账。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>覆盖正确性对账（状态与结果契约矛盾、缺失契约、迟到结果）、分配审计（降级与风险）、剪枝审计、语义交叉校验（能力声明、副作用声明与实际结果）与错误模式归集；结论分三级 ok / warning / critical。只读、可复跑、确定性——审计对象是状态机的自洽性，产出内容的正确性交给反思 / 判定处理，两者分离记录。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>覆盖正确性对账（状态与结果契约矛盾、缺失契约、迟到结果）、分配审计（降级与风险）、剪枝审计、语义交叉校验（能力声明、副作用声明与实际结果）与错误模式归集；结论分三级 ok / warning / critical。只读、纯函数、结论可重复（可重放）——审计对象是状态机的自洽性，产出内容的正确性交给反思 / 判定处理，两者分离记录。</div>
         </div>
 
         <div class="card" style="--cc:#be185d; --lc:#be185d">
@@ -418,7 +418,7 @@
         <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">
           <div class="card-title"><span class="mk"></span>复盘与规则提取</div>
           <div class="card-fn"><span class="tag">核心功能</span>运行收尾时对同一份报告执行只读复盘，产出分级的规则结论与动作建议。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>规则覆盖 REC-1（缺契约 / 状态矛盾，指向框架自身断链）、FP（同错误码频发，建议更换 agent）、DEG-1（降级占比高，核对拆解建议）、CAP-1（风险分配失败率高，重新采集能力）、BUG（实花超预算）、PRU-1（剪枝，复盘并行度）、INT-1（崩溃中断待人工）与 JUD-1 / JUD-2（目标未达成 / 判定未产出结论）。规则带证据强度分级：<span class="path">objective</span>（确定性事实，只读可复跑）与 <span class="path">judgment</span>（大模型判定，非确定有成本），禁止同级呈现。复盘为只读动作，异常一律隔离，不阻断运行收尾。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>规则覆盖 REC-1（缺契约 / 状态矛盾，指向框架自身的契约链路缺口）、FP（同错误码频发，建议更换 agent）、DEG-1（降级占比高，核对拆解建议）、CAP-1（风险分配失败率高，重新采集能力）、BUG（实花超预算）、PRU-1（剪枝，复盘并行度）、INT-1（崩溃中断待人工）与 JUD-1 / JUD-2（目标未达成 / 判定未产出结论）。规则带证据强度分级：<span class="path">objective</span>（确定性事实，只读、结论可重放）与 <span class="path">judgment</span>（大模型判定，非确定有成本），禁止同级呈现。复盘为只读动作，异常一律隔离，不阻断运行收尾。</div>
         </div>
 
         <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">
@@ -483,7 +483,7 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v2.3 · 2026-09-24 · 六层功能架构 + 持久化底座 · 468/468 测试通过
+  <b>Agents Orchestration</b> · 架构 v2.4 · 2026-09-24 · 六层功能架构 + 持久化底座 · 471/471 测试通过
   <br>目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习闭环 → 运行存档 → 崩溃恢复
 </footer>
 

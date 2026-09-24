@@ -88,7 +88,7 @@ def _view(**over):
 
 class TestBuildView:
     def test_deterministic(self):
-        """同一份存档 → 同一份视图（纯函数，可复跑）。"""
+        """同一份存档 → 同一份视图（纯函数，可重放）。"""
         a = json.dumps(_view(), ensure_ascii=False, sort_keys=True)
         b = json.dumps(_view(), ensure_ascii=False, sort_keys=True)
         assert a == b

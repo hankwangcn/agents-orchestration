@@ -178,7 +178,7 @@ class RunManager:
     def _attach_learning(self, handle: RunHandle) -> None:
         """学习层闭环：对同一份报告做确定性复盘 → 落盘经验库 → 回馈拆解。
 
-        ① 审计对账（只读、可复跑）→ ② 成本归集 → ③ 规则提取（含判定结论
+        ① 审计对账（只读、纯函数、结论可重放）→ ② 成本归集 → ③ 规则提取（含判定结论
         JUD-*）→ ④ 挂回报告 + 落盘为**跨 run 经验库**（回馈拆解提示词在
         拆解侧经 PromptAdvisor 读取）。
 
@@ -187,7 +187,7 @@ class RunManager:
         if handle.report is None:
             return
         try:
-            audit = Auditor(self._registry).audit(handle.report)
+            audit = Auditor().audit(handle.report)
             cost = CostAccountant(self._registry).account(handle.report)
             report = self._learning.learn(
                 audit, cost, handle.reflection_obj

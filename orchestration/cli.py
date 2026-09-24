@@ -361,7 +361,7 @@ def _print_reflection(ref: dict | None) -> None:
 
 
 def _print_audit(audit: dict | None, cost: dict | None) -> None:
-    """治理层确定性复盘：审计结论 + 成本归集（只读对账，可复跑）。"""
+    """治理层确定性复盘：审计结论 + 成本归集（只读对账，结论可重放）。"""
     if audit:
         print(f"\n审计：{audit.get('verdict')}  成功率 "
               f"{(audit.get('success_rate') or 0) * 100:.0f}%"

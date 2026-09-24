@@ -5,7 +5,7 @@
 **过程事件流**逐条落盘（状态变更即写）→ 终态报告归档（治理/学习产物挂回）→
 
 ① 运行枚举：`/api/runs`、`ao runs`（崩溃后 / 换进程后仍可发现已有 run）
-② 人读投影：`/api/runs/{id}/view`——**确定性、可复跑**（同一份存档 → 同一份视图）
+② 人读投影：`/api/runs/{id}/view`——**确定性、可重放**（同一份存档 → 同一份视图）
 ③ 接入层 Web 页面：`/`（列表）+ `/runs/{id}`（详情：过程时间线 + 任务 + 治理 +
    学习）——**服务端渲染、同源、零构建、零 CORS**
 ④ 叙述摘要：`POST /api/runs/{id}/narrative`——LLM 产出、**非确定**、
@@ -165,7 +165,7 @@ async def main(demo_dir: str | None = None) -> int:
                              and any(r["run_id"] == run_id and r["has_report"]
                                      for r in runs)))
 
-        print("\n== 4. 人读投影：确定性、可复跑 ==")
+        print("\n== 4. 人读投影：确定性、可重放 ==")
         s1, b1 = http_get(f"/api/runs/{run_id}/view")
         s2, b2 = http_get(f"/api/runs/{run_id}/view")
         v = json.loads(b1)
@@ -178,7 +178,7 @@ async def main(demo_dir: str | None = None) -> int:
                              s1 == 200 and bool(v["timeline"]) and bool(v["tasks"])
                              and v["governance"]["audit"] is not None
                              and v["learning"]["rules"]))
-        results.append(check("同一份存档 → 同一份视图（确定性、可复跑）",
+        results.append(check("同一份存档 → 同一份视图（确定性、可重放）",
                              b1 == b2))
 
         print("\n== 5. 叙述摘要：非确定、显式触发、单独留痕 ==")

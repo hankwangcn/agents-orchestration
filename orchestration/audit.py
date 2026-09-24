@@ -1,9 +1,9 @@
 """结果审计器（架构 §3.2 治理层；阶段二）。
 
-输入：ScheduleReport（调度收尾报告）+ AgentRegistry（agent 档案，预算/能力对比用）。
+输入：ScheduleReport（调度收尾报告）。输入封闭于该报告，不含任何外部运行态。
 输出：AuditReport——正确性对账 / 分配审计 / 剪枝审计 / 语义交叉校验 / 错误模式归集。
 
-审计是"汇聚验证"环节：只对账事实，不修改任何状态（纯函数式，可安全复跑）。
+审计为引用透明的纯函数：只对账事实，无副作用，结论可重复、可重放。
 同时产出喂给自我学习（learning.py）的原始素材。
 """
 from __future__ import annotations
@@ -13,7 +13,6 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from .models import Result, Task, TaskStatus
-from .registry import AgentRegistry
 from .models import Assignment
 from .scheduler import ScheduleReport
 
@@ -65,10 +64,10 @@ class AuditReport(BaseModel):
 
 
 class Auditor:
-    """审计器：对 ScheduleReport 做只读对账。"""
+    """审计器：对 ScheduleReport 做只读对账。
 
-    def __init__(self, registry: Optional[AgentRegistry] = None):
-        self._registry = registry
+    不接收外部运行态（注册表、时钟、状态存储等），以免破坏输入封闭性。
+    """
 
     # ------------------------------------------------------------------
 

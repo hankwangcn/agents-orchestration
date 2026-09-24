@@ -15,10 +15,10 @@ from orchestration.models import (
     Task,
     TaskStatus,
 )
-from orchestration.registry import AgentRegistry, Assignment
+from orchestration.registry import AgentRegistry
 from orchestration.scheduler import Scheduler, ScheduleReport
 
-from test_scheduler import ScriptedAdapter, dag_of, fail, ok, make_scheduler
+from test_scheduler import ScriptedAdapter, dag_of, fail, ok
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +211,6 @@ class TestSideEffectAudit:
 
 class TestErrorPatterns:
     def test_pattern_counts_and_order(self):
-        dag = dag_of(("a", []), ("b", ["a"]), ("c", ["b"]))
         # a 失败两次不同错误会怎样？同一任务最终只留一个 result；
         # 用三个独立失败任务测归集
         dag2 = dag_of(("x", []), ("y", []), ("z", []))
@@ -290,3 +289,41 @@ class TestInterrupted:
         report = run_report(dag, {"a": [ok("a")]})
         audit = audit_of(report)
         assert audit.interrupted_tasks == []
+
+
+# ---------------------------------------------------------------------------
+# 输入封闭性（引用透明纯函数红线）
+# ---------------------------------------------------------------------------
+
+class TestInputClosure:
+    """审计为引用透明的纯函数：输入封闭于调度报告，无副作用。
+
+    回归背景：审计器构造时曾接收注册表实例并持有，而全模块无任何读取点
+    （与已清理的同步调度器退避参数同类）。移除后"输入封闭 = 仅调度报告"
+    由实况升为结构保证。
+    """
+
+    def test_constructor_takes_no_external_state(self):
+        """构造器不接收任何外部运行态，故不可能引入报告之外的输入。"""
+        assert not hasattr(Auditor(), "_registry")
+        with pytest.raises(TypeError):
+            Auditor(object())  # 传入注册表等外部运行态不再被接受
+
+    def test_audit_is_repeatable(self):
+        """同一份报告重复审计，结论逐字节一致（结论可重复、可重放）。"""
+        dag = dag_of(("a", []), ("b", ["a"]))
+        report = run_report(dag, {"a": [ok("a")], "b": [fail("b", "model_error")] * 3})
+
+        first = audit_of(report).model_dump()
+        second = audit_of(report).model_dump()
+
+        assert first == second
+
+    def test_audit_has_no_side_effect_on_report(self):
+        """审计只读：不修改被审计的报告。"""
+        dag = dag_of(("a", []), ("b", ["a"]))
+        report = run_report(dag, {"a": [ok("a")], "b": [ok("b")]})
+
+        before = report.model_dump()
+        Auditor().audit(report)
+        assert report.model_dump() == before
