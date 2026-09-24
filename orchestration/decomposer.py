@@ -27,8 +27,11 @@ from .dependency import DependencyError, DependencyGraph
 from .models import DAG, ResourceRequirement, SideEffects, Task
 from .validation import ResponseValidationError, extract_json
 
-DECOMPOSE_PROMPT_VERSION = "v2"
-"""提示词版本——学习层回馈（动态指导块）改变了提示词形态，故升版留痕。"""
+DECOMPOSE_PROMPT_VERSION = "v3"
+"""提示词版本——提示词文本变更即升版留痕。
+v2：学习层回馈（动态指导块）改变了提示词形态。
+v3：增补执行侧裁定范围声明（子任务描述给出目标与结果要求即可，取舍在
+执行侧裁定，无需预设决策分支）。"""
 
 DECOMPOSITION_PROMPT = """你是任务拆解引擎。将用户目标拆解为可执行的子任务集合，输出任务间的数据流依赖。
 
@@ -60,6 +63,8 @@ DECOMPOSITION_PROMPT = """你是任务拆解引擎。将用户目标拆解为可
 1. deps 只能引用本 JSON 中已定义的任务 id，且依赖关系不能成环
 2. 至少有一个任务没有下游（最终交付任务）
 3. 拆分粒度：每个任务可在一次 LLM 调用内独立完成，不要过度拆分
+4. 子任务描述给出目标与结果要求即可：目标与契约（输入、输出结构、约束）范围内的
+   全部取舍由执行侧自行裁定，无需在子任务中穷举偏好或预设决策分支
 """
 
 # 正确拆解示例：重试修正提示用（口径同协议 §7.3——失败原因 + 正确示例）

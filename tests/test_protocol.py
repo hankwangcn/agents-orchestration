@@ -4,6 +4,7 @@ import json
 from orchestration.protocol import (
     PROTOCOL_PROMPT_FULL,
     PROTOCOL_PROMPT_SIMPLE,
+    PROTOCOL_VERSION,
     build_info_request,
     build_task_request,
     render,
@@ -44,7 +45,7 @@ class TestRender:
         text = render(req, template_mode="full", inputs={"up": 1})
         assert "=== REQUEST ===" in text
         assert "=== INPUT ===" in text
-        assert "Agent 执行协议 v1.1" in text
+        assert "Agent 执行协议 v1.2" in text
         # INPUT 段是独立 JSON
         input_part = text.split("=== INPUT ===")[1]
         assert json.loads(input_part) == {"up": 1}
@@ -63,3 +64,40 @@ class TestRender:
     def test_full_template_has_few_shot(self):
         assert "响应示例" in PROTOCOL_PROMPT_FULL
         assert "常见错误" in PROTOCOL_PROMPT_FULL
+
+
+class TestIdempotencyObligation:
+    """#58 定标（方案 B）：幂等责任归执行侧，由模板显式声明；
+    框架侧不对副作用任务的重复执行设拦截。"""
+
+    def test_full_template_declares_idempotency_duty(self):
+        assert "幂等" in PROTOCOL_PROMPT_FULL
+        assert "side_effects" in PROTOCOL_PROMPT_FULL
+
+    def test_simple_template_declares_idempotency_duty(self):
+        assert "幂等" in PROTOCOL_PROMPT_SIMPLE
+        assert "side_effects" in PROTOCOL_PROMPT_SIMPLE
+
+    def test_template_version_consistent(self):
+        """版本号常量与两档模板内声明一致（协议 §6 版本管理）。"""
+        assert PROTOCOL_VERSION == "v1.2"
+        assert f"Agent 执行协议 {PROTOCOL_VERSION}" in PROTOCOL_PROMPT_FULL
+        assert f"Agent 执行协议 {PROTOCOL_VERSION}" in PROTOCOL_PROMPT_SIMPLE
+
+
+class TestAdjudicationScope:
+    """执行侧裁定范围声明：目标与契约范围内的全部取舍（含价值性取舍）由执行侧
+    自行裁定，框架不设征询通道（协议 §3 行为约束第 6 条、§8.8）。"""
+
+    def test_full_template_declares_adjudication_scope(self):
+        assert "全部取舍由你自行裁定" in PROTOCOL_PROMPT_FULL
+        assert "含价值性取舍" in PROTOCOL_PROMPT_FULL
+        assert "不提供征询通道" in PROTOCOL_PROMPT_FULL
+
+    def test_full_template_forbids_waiting_on_external_decision(self):
+        """等待外部决策不得表现为执行中间态或失败——只能由执行侧自行裁定。"""
+        assert "不得以待外部决策为由中止执行或返回失败" in PROTOCOL_PROMPT_FULL
+
+    def test_simple_template_declares_adjudication_scope(self):
+        assert "取舍由你自行裁定" in PROTOCOL_PROMPT_SIMPLE
+        assert "不等待外部决策" in PROTOCOL_PROMPT_SIMPLE

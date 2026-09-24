@@ -238,7 +238,7 @@
         <div class="card" style="--cc:#6d28d9; --lc:#6d28d9">
           <div class="card-title"><span class="mk"></span>任务拆解引擎</div>
           <div class="card-fn"><span class="tag">核心功能</span>将自然语言目标转换为带数据流依赖的子任务图。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>由大模型完成拆解，产出任务图并执行拆解 Schema 校验与修正重试（重试携带失败原因与正确示例）。每个子任务声明 <span class="path">model / budget / timeout</span> 与能力标签 <span class="path">required_capabilities</span>，作为后续分配依据。提示词结构为“固定指令 → 学习层指导块 → 用户目标”。属框架内部大模型调用，不经消息协议。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>由大模型完成拆解，产出任务图并执行拆解 Schema 校验与修正重试（重试携带失败原因与正确示例）。每个子任务声明 <span class="path">model / budget / timeout</span> 与能力标签 <span class="path">required_capabilities</span>，作为后续分配依据。子任务描述给出目标与结果要求即可——目标与契约范围内的取舍由执行侧裁定，无需穷举偏好或预设决策分支。提示词结构为“固定指令 → 学习层指导块 → 用户目标”。属框架内部大模型调用，不经消息协议。</div>
         </div>
 
         <div class="card" style="--cc:#6d28d9; --lc:#6d28d9">
@@ -294,7 +294,7 @@
         <div class="card" style="--cc:#0f766e; --lc:#0f766e">
           <div class="card-title"><span class="mk"></span>失败处理器</div>
           <div class="card-fn"><span class="tag">核心功能</span>重试 → 失败传播 → 失效任务剪除 → 统一收尾反馈。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>该能力跨三层协作，不构成独立模块——剪枝算法属图结构计算，取消下发与派发冻结属调度控制流。剪枝判据为“任务的产出是否仍被最终交付消费”（反向可达）：存活交付点为空则整棵任务图取消。取消为 best-effort，不阻塞收尾。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>该能力跨三层协作，不构成独立模块——剪枝算法属图结构计算，取消下发与派发冻结属调度控制流。剪枝判据为“任务的产出是否仍被最终交付消费”（反向可达）：存活交付点为空则整棵任务图取消。取消为 best-effort，不阻塞收尾。重试为任务级动作，不区分副作用声明；副作用任务的幂等责任归执行侧（由协议模板声明），断点恢复路径另按 A+B 策略拦截。</div>
         </div>
 
       </div>
@@ -336,7 +336,7 @@
         <div class="card" style="--cc:#b45309; --lc:#b45309">
           <div class="card-title"><span class="mk"></span>Agent（外部）</div>
           <div class="card-fn"><span class="tag">核心功能</span>接收请求、返回符合结果契约的 JSON，无需为该框架作适配改造。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>唯一强制约束是输出合法 JSON；格式漂移、语义漂移与提示注入等稳定性风险全部由框架侧解析组件收敛，agent 侧无需适配。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>唯一强制约束是输出合法 JSON；格式漂移、语义漂移与提示注入等稳定性风险全部由框架侧解析组件收敛，agent 侧无需适配。目标与契约范围内的全部取舍（含价值性取舍）由其自行裁定，框架不设征询通道。</div>
         </div>
 
       </div>
@@ -483,7 +483,7 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v2.5 · 2026-09-24 · 六层功能架构 + 持久化底座 · 471/471 测试通过
+  <b>Agents Orchestration</b> · 架构 v2.6 · 2026-09-24 · 六层功能架构 + 持久化底座 · 481/481 测试通过
   <br>目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习闭环 → 运行存档 → 崩溃恢复
 </footer>
 

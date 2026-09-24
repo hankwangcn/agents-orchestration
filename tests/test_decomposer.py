@@ -11,6 +11,7 @@ import json
 import pytest
 
 from orchestration.decomposer import (
+    DECOMPOSE_PROMPT_VERSION,
     DECOMPOSITION_EXAMPLE,
     DECOMPOSITION_PROMPT,
     DecomposeError,
@@ -245,3 +246,16 @@ class TestDefaultDecomposer:
         monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         with pytest.raises(ValueError):
             make_default_decomposer()
+
+
+class TestAdjudicationScopeDeclaration:
+    """执行侧裁定范围声明（#57 ⑤）：子任务描述给出目标与结果要求即可——契约
+    范围内的取舍由执行侧自行裁定，无需在子任务中穷举偏好或预设决策分支。"""
+
+    def test_prompt_declares_execution_side_adjudication(self):
+        assert "取舍由执行侧自行裁定" in DECOMPOSITION_PROMPT
+        assert "无需在子任务中穷举偏好或预设决策分支" in DECOMPOSITION_PROMPT
+
+    def test_prompt_version_matches_text(self):
+        """提示词文本变更即升版留痕（新版声明与旧版提示词不得错配）。"""
+        assert DECOMPOSE_PROMPT_VERSION == "v3"

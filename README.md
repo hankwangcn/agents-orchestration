@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/hankwangcn/agents-orchestration/blob/main/LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-471%2F471%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
+[![Tests](https://img.shields.io/badge/tests-481%2F481%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不观测 agent 内部状态。**
 
@@ -474,7 +474,7 @@ agents-orchestration/
 │   ├── smoke_learning.py     # 学习层闭环冒烟（复盘 → 经验库落盘 → 回馈拆解提示词）
 │   ├── smoke_archive.py      # 运行存档与 Web 页面冒烟（事件流 → 人读投影 → Web / 叙述）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 471 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 反思判定 / 学习闭环 / 运行存档 / Web / 并发 / 网关 / 断点 / CLI / 适配器）
+├── tests/                   # 481 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 反思判定 / 学习闭环 / 运行存档 / Web / 并发 / 网关 / 断点 / CLI / 适配器）
 ├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告 + Web 页面示例
 └── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
@@ -485,10 +485,10 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 471/471 全绿
+pytest        # 481/481 全绿
 ```
 
-测试覆盖重点：依赖分析（拓扑分层、并行前沿、可达性、成环与引用校验，23 项）、层职责切分（规划层资源统计器与调度层资源协调器）、解析组件（最严格模块，47 项：信封校验、输出结构强校验与重试容错）、剪枝算法（反向可达、多交付点语义）、并发竞态、速率限制、治理三项（审计 / 成本 / 学习）、审计输入封闭性（引用透明、结论可重放）、网关生命周期、断点恢复（A+B 策略）、CLI 命令与请求构造、交互式会话（运行标识记忆、引导式提交、错误不退出）、进程内适配器（str 与 dict 返回、解析重试、免 HTTP 全流程）、配置批量注册（YAML / JSON / 环境变量取 key / 自定义工厂）、采集侧墙钟超时、学习层闭环（证据分级、经验库落盘与跨运行聚合、复现门槛、提示词注入与客观 - 判定分离，43 项）、CLI 学习层出口（报告打印审计 / 成本 / 学习与 `ao lessons`，5 项）、运行存档（事件流、报告读回、运行枚举、叙述留档、级联清理与底座退化，10 项）、人读投影（确定性、结构、转义、运行中投影、HTML 渲染，10 项）、网关存档与 Web（过程事件流落盘、重启后报告读回、运行枚举与投影端点、Web 页面、叙述端点与故障映射，9 项）、CLI 存档出口（`ao runs` / `ao view` / `ao narrate`，4 项）。
+测试覆盖重点：依赖分析（拓扑分层、并行前沿、可达性、成环与引用校验，23 项）、层职责切分（规划层资源统计器与调度层资源协调器）、解析组件（最严格模块，47 项：信封校验、输出结构强校验与重试容错）、剪枝算法（反向可达、多交付点语义）、并发竞态、速率限制、治理三项（审计 / 成本 / 学习）、审计输入封闭性（引用透明、结论可重放）、网关生命周期、断点恢复（A+B 策略）、CLI 命令与请求构造、交互式会话（运行标识记忆、引导式提交、错误不退出）、进程内适配器（str 与 dict 返回、解析重试、免 HTTP 全流程）、配置批量注册（YAML / JSON / 环境变量取 key / 自定义工厂）、采集侧墙钟超时、学习层闭环（证据分级、经验库落盘与跨运行聚合、复现门槛、提示词注入与客观 - 判定分离，43 项）、CLI 学习层出口（报告打印审计 / 成本 / 学习与 `ao lessons`，5 项）、运行存档（事件流、报告读回、运行枚举、叙述留档、级联清理与底座退化，10 项）、人读投影（确定性、结构、转义、运行中投影、HTML 渲染，10 项）、网关存档与 Web（过程事件流落盘、重启后报告读回、运行枚举与投影端点、Web 页面、叙述端点与故障映射，9 项）、CLI 存档出口（`ao runs` / `ao view` / `ao narrate`，4 项）、执行侧职责声明（两档模板的取舍裁定范围声明与拆解提示词版本一致性，5 项）。
 
 ---
 

@@ -16,6 +16,7 @@ from orchestration.models import (
     DAG,
     ResourceRequirement,
     Result,
+    SideEffects,
     Task,
     TaskStatus,
 )
@@ -580,6 +581,46 @@ class TestFrameworkTimeout:
         assert report.results["a"].error.code == "timeout"
         assert dag.tasks["b"].status == TaskStatus.CANCELLED  # 下游剪枝
         assert report.prune_reports and report.prune_reports[0].pruned_final
+        assert report.final_status == "failed"
+
+
+# ---------------------------------------------------------------------------
+# 派发内重试与副作用声明（#58 定标 · 方案 B）
+# ---------------------------------------------------------------------------
+
+class TestDispatchRetryIgnoresSideEffects:
+    """#58 定标（方案 B）：派发内重试不区分副作用声明，幂等责任归执行侧。
+
+    对照 §5.5 断点恢复路径的 A+B 策略（声明副作用的任务恢复时不自动重派）：
+    两条路径口径不同——恢复路径拦截，派发内重试不拦截，由协议模板声明
+    「声明副作用的任务须自行保证幂等」。
+    """
+
+    def test_side_effect_task_retried_within_dispatch(self):
+        dag = DAG(tasks={
+            "a": Task(id="a", desc="a", side_effects=SideEffects.EXTERNAL_API),
+        })
+        adapter = AsyncScriptedAdapter({"a": [fail("a"), ok("a")]})
+        sched, _ = make_scheduler(adapter, retries=2)
+
+        report = run(sched, dag)
+
+        assert len(adapter.calls) == 2  # 声明副作用不阻止派发内重试
+        assert report.final_status == "success"
+        assert dag.tasks["a"].result.retries == 1
+
+    def test_side_effect_task_exhausts_retries(self):
+        """重试次数不因副作用声明收敛：默认重试 2 次 → 最多执行 3 次。"""
+        dag = DAG(tasks={
+            "a": Task(id="a", desc="a", side_effects=SideEffects.FILE_WRITE),
+        })
+        adapter = AsyncScriptedAdapter({"a": [fail("a"), fail("a"), fail("a")]})
+        sched, _ = make_scheduler(adapter, retries=2)
+
+        report = run(sched, dag)
+
+        assert len(adapter.calls) == 3
+        assert dag.tasks["a"].status == TaskStatus.FAILED
         assert report.final_status == "failed"
 
 
