@@ -8,8 +8,10 @@ import time
 from orchestration.api.gateway import RunManager, create_app
 from orchestration.decomposer import Decomposer
 from orchestration.models import DAG, Task, TaskStatus
+from orchestration.narrative import Narrator
 from orchestration.reflection import Reflector
 from orchestration.registry import AgentRegistry
+from orchestration.state_store import SqliteStateStore
 
 from helpers import AsyncScriptedAdapter, ok
 
@@ -425,3 +427,214 @@ class TestGoalAndReflection:
                 time.sleep(0.02)
             assert snap["goal"] == "生成比价报告"
             assert snap["status"] == "done"
+
+
+class TestArchiveAndWeb:
+    """运行存档闭环 + 接入层 Web 页面（#48/#49）。
+
+    覆盖：过程事件流落盘、报告读回（进程重启后）、运行枚举、人读投影端点、
+    Web 页面（列表 + 详情）、叙述摘要（显式触发、非确定、单独留痕）。
+    """
+
+    @staticmethod
+    def _dag():
+        return DAG(tasks={
+            "a": Task(id="a", desc="抓取价格"),
+            "b": Task(id="b", desc="出报告", deps=["a"]),
+        })
+
+    def _manager(self, store):
+        adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
+        reg = AgentRegistry()
+        reg.register(adapter)
+        return RunManager(registry=reg, state_store=store), reg
+
+    def test_event_stream_persisted(self):
+        """run 收尾后过程事件流已落盘（状态变更逐条，可回放）。"""
+        store = SqliteStateStore(":memory:")
+        manager, _ = self._manager(store)
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="整理比价报告")
+            await manager.wait(rid)
+            return rid
+
+        rid = asyncio.run(_flow())
+        events = store.load_events(rid)
+        kinds = [e["event"] for e in events]
+        assert kinds[0] == "run_started" and kinds[-1] == "run_finished"
+        assert "task_launched" in kinds and "task_done" in kinds
+        done = [e for e in events if e["event"] == "task_done"]
+        assert {e["task_id"] for e in done} == {"a", "b"}
+        assert all(e["agent_id"] for e in done)
+
+    def test_report_readback_after_restart(self):
+        """进程重启后（handle 不在）报告仍可从运行存档读回——原先只写不读。"""
+        store = SqliteStateStore(":memory:")
+        manager, _ = self._manager(store)
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="g")
+            await manager.wait(rid)
+            return rid
+
+        rid = asyncio.run(_flow())
+
+        # 新 manager（模拟新进程）：无内存 handle，仅共享 store
+        fresh, _ = self._manager(store)
+        rep = fresh.report(rid)
+        assert rep["final_status"] == "success"
+        assert set(rep["task_results"]) == {"a", "b"}
+
+    def test_run_enumeration_endpoints(self):
+        store = SqliteStateStore(":memory:")
+        manager, reg = self._manager(store)
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="比价")
+            await manager.wait(rid)
+            return rid
+
+        rid = asyncio.run(_flow())
+        app, _ = create_app(reg, state_store=store)
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            resp = client.get("/api/runs")
+            assert resp.status_code == 200
+            runs = resp.json()["runs"]
+            assert any(r["run_id"] == rid and r["has_report"] for r in runs)
+
+    def test_run_view_endpoint(self):
+        store = SqliteStateStore(":memory:")
+        manager, reg = self._manager(store)
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="整理比价报告")
+            await manager.wait(rid)
+            return rid
+
+        rid = asyncio.run(_flow())
+        app, _ = create_app(reg, state_store=store)
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            v = client.get(f"/api/runs/{rid}/view").json()
+            assert v["run_id"] == rid
+            assert v["goal"] == "整理比价报告"
+            assert v["archive"]["report_available"] is True
+            assert v["archive"]["event_count"] >= 4
+            assert len(v["timeline"]) == v["archive"]["event_count"]
+            assert {t["task_id"] for t in v["tasks"]} == {"a", "b"}
+            assert v["narrative"] is None  # 未显式生成
+
+    def test_web_pages_render(self):
+        store = SqliteStateStore(":memory:")
+        manager, reg = self._manager(store)
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="g")
+            await manager.wait(rid)
+            return rid
+
+        rid = asyncio.run(_flow())
+        app, _ = create_app(reg, state_store=store)
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            idx = client.get("/")
+            assert idx.status_code == 200
+            assert "text/html" in idx.headers["content-type"]
+            assert f"/runs/{rid}" in idx.text
+
+            page = client.get(f"/runs/{rid}")
+            assert page.status_code == 200
+            assert "text/html" in page.headers["content-type"]
+            assert "过程时间线" in page.text and rid in page.text
+
+            # 未知 run → 错误页（非裸 JSON）
+            missing = client.get("/runs/nope")
+            assert missing.status_code == 404
+            assert "text/html" in missing.headers["content-type"]
+            assert "无法打开" in missing.text
+
+    def test_narrative_requires_engine(self):
+        """未注入叙述引擎 → 400（叙述是可选能力，不影响确定性投影）。"""
+        reg = AgentRegistry()
+        reg.register(AsyncScriptedAdapter({"a": [ok("a")]}))
+        app, _ = create_app(reg)
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            resp = client.post("/api/runs/whatever/narrative")
+            assert resp.status_code == 400
+
+    def test_narrative_generated_and_persisted(self):
+        """显式触发 → LLM 产出叙述摘要，单独落盘（非确定，不混入报告）。"""
+        store = SqliteStateStore(":memory:")
+        adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
+        reg = AgentRegistry()
+        reg.register(adapter)
+        narrator = Narrator(lambda prompt: " 本次运行成功交付比价报告。 ",
+                            model="fake-narrator")
+        app, manager = create_app(reg, state_store=store, narrator=narrator)
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="整理比价报告")
+            await manager.wait(rid)
+            return rid
+
+        rid = asyncio.run(_flow())
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            resp = client.post(f"/api/runs/{rid}/narrative")
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["source"] == "llm" and body["deterministic"] is False
+            assert "比价报告" in body["text"]
+            assert body["text"] == body["text"].strip()  # 已去空白
+            # 单独留痕
+            saved = store.load_narrative(rid)
+            assert saved["text"] == body["text"] and saved["model"] == "fake-narrator"
+            # 视图里作为独立字段出现（不并入确定性内容）
+            v = client.get(f"/api/runs/{rid}/view").json()
+            assert v["narrative"]["text"] == body["text"]
+
+    def test_narrative_failure_maps_502(self):
+        from orchestration.narrative import NarrativeError
+
+        def _boom(prompt):
+            raise NarrativeError("llm down")
+
+        store = SqliteStateStore(":memory:")
+        adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
+        reg = AgentRegistry()
+        reg.register(adapter)
+        app, manager = create_app(
+            reg, state_store=store, narrator=Narrator(_boom, model="x")
+        )
+
+        async def _flow():
+            rid = await manager.submit(self._dag(), goal="g")
+            await manager.wait(rid)
+            return rid
+
+        rid = asyncio.run(_flow())
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            assert client.post(f"/api/runs/{rid}/narrative").status_code == 502
+
+    def test_narrative_running_conflict(self):
+        actor = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]},
+                                     delay=0.3)
+        reg = AgentRegistry()
+        reg.register(actor)
+        store = SqliteStateStore(":memory:")
+        app, manager = create_app(
+            reg, state_store=store, narrator=Narrator(lambda p: "x", model="m")
+        )
+        from fastapi.testclient import TestClient
+        with TestClient(app) as client:
+            rid = client.post("/api/runs", json={
+                "dag": {"tasks": {"a": {"id": "a", "desc": "a"}}},
+                "goal": "g",
+            }).json()["run_id"]
+            resp = client.post(f"/api/runs/{rid}/narrative")
+            assert resp.status_code == 409  # 尚未收尾
+            manager._runs[rid].cancel_event.set()  # 收尾，避免悬挂

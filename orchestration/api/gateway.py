@@ -14,6 +14,13 @@ RunManager 管理 run 生命周期（run_id → 后台 asyncio.Task + 状态快�
 成本归集 → 规则提取（含判定结论），产物挂回报告；启用存储时规则落盘成
 **跨 run 经验库**，并经 `lessons.PromptAdvisor` 回馈拆解提示词
 （见 `decomposer.Decomposer(guidance_provider=...)`）。
+
+**运行存档 + 接入层 Web**：启用存储时，run 的**过程事件流**（状态变更逐条
+落盘）与**终态报告**即运行存档（持久化底座、唯一真源）；网关另行提供
+**运行枚举**（`/api/runs`）、**人读投影**（`/api/runs/{id}/view`，确定性、
+按需渲染）、**叙述摘要**（`/api/runs/{id}/narrative`，LLM 非确定、显式触发）
+与**服务端渲染的 Web 页面**（`/` 列表 + `/runs/{id}` 详情，同源、零构建、
+零 CORS）。人读版是存档的读时投影，不落盘成第二份真相。
 """
 from __future__ import annotations
 
@@ -23,6 +30,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from ..audit import Auditor
@@ -33,8 +41,10 @@ from ..learning import LearningEngine
 from ..lessons import build_digest
 from ..metrics import MetricsCollector, configure_logging, log_event
 from ..models import DAG, Result, TaskStatus
+from ..narrative import NarrativeError, Narrator
 from ..reflection import ReflectionReport, Reflector
 from ..registry import AgentRegistry
+from ..report_view import build_run_view, render_index_html, render_run_html
 from ..scheduler_async import AsyncScheduler, ScheduleReport
 from ..state_store import StateStore
 
@@ -77,6 +87,7 @@ class RunManager:
         decomposer: Optional[Decomposer] = None,
         reflector: Optional[Reflector] = None,
         learning: Optional[LearningEngine] = None,
+        narrator: Optional[Narrator] = None,
     ):
         self._registry = registry
         self._metrics = metrics or MetricsCollector()
@@ -84,6 +95,7 @@ class RunManager:
         self._decomposer = decomposer
         self._reflector = reflector
         self._learning = learning or LearningEngine()
+        self._narrator = narrator
         self._scheduler = AsyncScheduler(
             registry=registry,
             retries=retries,
@@ -261,8 +273,14 @@ class RunManager:
         }
 
     def report(self, run_id: str) -> dict:
-        """收尾报告（含审计/成本/学习产物——治理 + 学习层的确定性复盘）。"""
-        handle = self._get(run_id)
+        """收尾报告（含审计/成本/学习产物——治理 + 学习层的确定性复盘）。
+
+        内存 handle 优先（运行中的最新）；进程重启后 handle 不在 → 从运行存档
+        读回（原先只写不读，重启后已完成 run 的报告返回 404）。
+        """
+        handle = self._runs.get(run_id)
+        if handle is None:
+            return self._report_from_archive(run_id)
         if handle.status == "running":
             raise HTTPException(status_code=409, detail="run 尚未结束")
         if handle.status == "failed":
@@ -285,6 +303,31 @@ class RunManager:
             "learning": report.learning,
         }
 
+    def _report_from_archive(self, run_id: str) -> dict:
+        """从运行存档读回收尾报告（进程重启后的读回路径）。"""
+        arch = self._load_archive(run_id)
+        if arch is None:
+            raise HTTPException(status_code=404, detail=f"run 不存在：{run_id}")
+        rep = arch["report"]
+        if rep is None:
+            raise HTTPException(status_code=409, detail="run 尚未收尾（无终态报告）")
+        return {
+            "run_id": run_id,
+            "goal": arch["goal"],
+            "final_status": rep.get("final_status"),
+            "total_cost": rep.get("total_cost"),
+            "task_results": {
+                tid: _result_summary_dict(r)
+                for tid, r in (rep.get("results") or {}).items()
+            },
+            "prune_reports": rep.get("prune_reports") or [],
+            "assignments": rep.get("assignments") or [],
+            "reflection": rep.get("reflection"),
+            "audit": rep.get("audit"),
+            "cost": rep.get("cost"),
+            "learning": rep.get("learning"),
+        }
+
     def lessons_snapshot(self, limit: int = 20) -> dict:
         """跨 run 经验库视图（学习层闭环的"记忆"出口）。
 
@@ -302,6 +345,102 @@ class RunManager:
             "lesson_count": len(digest.lessons),
             "generated_at": digest.generated_at,
             "lessons": [ls.model_dump() for ls in digest.lessons[: max(limit, 0)]],
+        }
+
+    # ---------- 运行存档：读回 / 枚举 / 人读投影 / 叙述摘要 ----------
+
+    def list_runs(self, limit: int = 50) -> list[dict]:
+        """运行枚举（最近在前）。持久化底座优先，内存中的运行中 run 兜底纳入。"""
+        out: list[dict] = []
+        seen: set[str] = set()
+        if self._store is not None:
+            for r in self._store.list_runs(limit=limit):
+                out.append(r)
+                seen.add(r["run_id"])
+        for rid, h in self._runs.items():
+            if rid in seen:
+                continue
+            out.append({
+                "run_id": rid,
+                "goal": h.goal,
+                "run_status": h.status,
+                "updated_at": h.finished_at or h.started_at,
+                "has_report": h.report is not None,
+            })
+        out.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
+        return out[: max(0, limit)]
+
+    def _load_archive(self, run_id: str) -> Optional[dict]:
+        """读运行存档（过程事件流 + 终态报告 + 目标）。
+
+        持久化底座优先（进程重启后仍可读回）；底座未落盘时回退到内存 handle
+        （run 刚提交、尚未首次落盘的窗口）。都没有返回 None。
+        """
+        if self._store is not None and self._store.has_run(run_id):
+            data = self._store.load_run(run_id)
+            return {
+                "goal": data.get("goal", ""),
+                "run_status": data.get("run_status", ""),
+                "dag": data["dag"].model_dump(mode="json"),
+                "events": self._store.load_events(run_id),
+                "report": self._store.load_report(run_id),
+                "narrative": self._store.load_narrative(run_id),
+            }
+        handle = self._runs.get(run_id)
+        if handle is None:
+            return None
+        dag = (handle.report.dag if handle.report else handle.dag)
+        return {
+            "goal": handle.goal,
+            "run_status": handle.status,
+            "dag": dag.model_dump(mode="json"),
+            "events": (self._store.load_events(run_id)
+                       if self._store is not None else []),
+            "report": (handle.report.model_dump(mode="json")
+                       if handle.report is not None else None),
+            "narrative": (self._store.load_narrative(run_id)
+                          if self._store is not None else None),
+        }
+
+    def archive_view(self, run_id: str) -> dict:
+        """运行存档的人读投影（确定性、按需渲染，不落盘成第二份真相）。"""
+        arch = self._load_archive(run_id)
+        if arch is None:
+            raise HTTPException(status_code=404, detail=f"run 不存在：{run_id}")
+        return build_run_view(
+            run_id=run_id, goal=arch["goal"], run_status=arch["run_status"],
+            dag=arch["dag"], events=arch["events"], report=arch["report"],
+            narrative=arch["narrative"],
+        )
+
+    async def narrate(self, run_id: str) -> dict:
+        """显式生成叙述摘要（LLM 产出、非确定、单独留痕）——不默认生成。"""
+        if self._narrator is None:
+            raise HTTPException(
+                status_code=400,
+                detail="未配置叙述引擎（LLM）——请设置 $DEEPSEEK_API_KEY 后重启 "
+                       "serve，或注入自定义 narrator",
+            )
+        view = self.archive_view(run_id)
+        if not view["archive"]["report_available"]:
+            raise HTTPException(
+                status_code=409, detail="run 尚未收尾——叙述摘要需终态报告"
+            )
+        try:
+            narrative = await self._narrator.anarrate(view)
+        except NarrativeError as e:
+            raise HTTPException(status_code=502, detail=f"叙述生成失败：{e}") from None
+        if self._store is not None:
+            try:
+                self._store.save_narrative(run_id, narrative)
+            except Exception as e:  # 归档写失败不阻断返回（叙述仍可呈现）
+                log_event("narrative_store_error", run_id=run_id, error=str(e))
+        log_event("run_narrated", run_id=run_id, model=narrative.get("model"))
+        return {
+            "run_id": run_id,
+            "source": "llm",
+            "deterministic": False,
+            **narrative,
         }
 
     async def cancel(self, run_id: str) -> dict:
@@ -523,27 +662,54 @@ def create_app(
     decomposer: Optional[Decomposer] = None,
     reflector: Optional[Reflector] = None,
     learning: Optional[LearningEngine] = None,
+    narrator: Optional[Narrator] = None,
 ) -> tuple[FastAPI, RunManager]:
     """构造 (app, manager)。registry 需已注册 agent（可先 collect 能力声明）。
 
     state_store：启用断点持久化（SQLite 等），提供 resume / resolve / lessons 端点，
-    并作为学习层跨 run 经验库的落盘载体。
+    并作为学习层跨 run 经验库与**运行存档**（过程事件流 + 终态报告）的落盘载体。
     decomposer：启用规划层拆解（POST /api/decompose）——未注入则端点返回 400。
     reflector：启用治理层反思/判定（run 收尾后按 goal 判定交付，advisory）——
     未注入则不做判定。
     learning：替换学习层阈值配置（默认 LearningEngine()；审计/成本/学习是
     确定性复盘，始终启用，不依赖注入）。
+    narrator：启用叙述摘要（POST /api/runs/{id}/narrative，LLM 产出、非确定、
+    显式触发）——未注入则端点返回 400。人读**结构化**投影（Web/CLI）始终可用，
+    不依赖 narrator。
     """
     configure_logging()
     manager = RunManager(
         registry, retries=retries, metrics=metrics, state_store=state_store,
         decomposer=decomposer, reflector=reflector, learning=learning,
+        narrator=narrator,
     )
     app = FastAPI(
         title="Agents Orchestration Gateway",
         description="结果导向 Agent 编排框架——API 入口",
         version="0.1.0",
     )
+
+    # ---------- 接入层 Web 页面（服务端渲染；同源、零构建、零 CORS）----------
+
+    @app.get("/", response_class=HTMLResponse)
+    async def index_page() -> HTMLResponse:
+        """运行列表页（run 枚举 → 跳转详情）。"""
+        try:
+            runs = manager.list_runs(limit=200)
+        except Exception:  # 存档读失败不阻塞首页
+            runs = []
+        return HTMLResponse(render_index_html(runs))
+
+    @app.get("/runs/{run_id}", response_class=HTMLResponse)
+    async def run_page(run_id: str) -> HTMLResponse:
+        """运行详情页（整条业务完成过程：时间线 + 任务 + 治理 + 学习）。"""
+        try:
+            view = manager.archive_view(run_id)
+        except HTTPException as e:
+            return HTMLResponse(
+                _error_page(run_id, str(e.detail)), status_code=e.status_code
+            )
+        return HTMLResponse(render_run_html(view))
 
     @app.post("/api/runs", status_code=201)
     async def submit_run(payload: DagSubmit) -> dict:
@@ -554,6 +720,12 @@ def create_app(
         dag = DAG.model_validate(payload.dag)
         run_id = await manager.submit(dag, run_id=payload.run_id, goal=payload.goal)
         return {"run_id": run_id, "status": "submitted"}
+
+    @app.get("/api/runs")
+    async def list_runs(limit: int = 50) -> dict:
+        """运行枚举（最近在前）——崩溃后/换进程后仍可发现已有 run。"""
+        return {"runs": manager.list_runs(limit=limit)}
+
 
     @app.post("/api/decompose")
     async def decompose_goal(payload: DecomposeRequest) -> dict:
@@ -571,6 +743,16 @@ def create_app(
     async def run_report(run_id: str) -> dict:
         """收尾报告（结果/剪枝/分配/成本）。"""
         return manager.report(run_id)
+
+    @app.get("/api/runs/{run_id}/view")
+    async def run_view(run_id: str) -> dict:
+        """运行存档的人读投影（确定性、按需渲染）：过程时间线 + 任务 + 治理 + 学习。"""
+        return manager.archive_view(run_id)
+
+    @app.post("/api/runs/{run_id}/narrative")
+    async def run_narrative(run_id: str) -> dict:
+        """显式生成叙述摘要（LLM 产出、非确定、单独留痕）——不默认生成。"""
+        return await manager.narrate(run_id)
 
     @app.get("/api/runs/{run_id}/metrics")
     async def run_metrics(run_id: str) -> dict:
@@ -630,6 +812,26 @@ def _dependency_analysis(dag: DAG) -> dict:
     }
 
 
+def _error_page(run_id: str, detail: str) -> str:
+    """Web 详情页的错误呈现（不返回裸 JSON）。"""
+    import html as _h
+    return (
+        '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/>'
+        '<meta name="viewport" content="width=device-width,initial-scale=1"/>'
+        f'<title>run {_h.escape(run_id)}</title></head><body '
+        'style="font-family:system-ui,-apple-system,sans-serif;background:#f1f5f9;'
+        'margin:0;padding:60px 20px"><div style="max-width:640px;margin:0 auto;'
+        'background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:28px 32px">'
+        f'<h1 style="font-size:18px;margin:0 0 10px;color:#0f172a">无法打开 run '
+        f'{_h.escape(run_id)}</h1>'
+        f'<p style="color:#64748b;font-size:13.5px;margin:0 0 18px">'
+        f'{_h.escape(detail)}</p>'
+        '<a href="/" style="color:#0284c7;font-size:13.5px">← 返回运行列表</a>'
+        '</div></body></html>'
+    )
+
+
+
 def _result_summary(r: object) -> dict:
     """Result 契约的对外摘要（不泄露内部字段）。"""
     if r is None:
@@ -641,4 +843,18 @@ def _result_summary(r: object) -> dict:
         "cost": r.usage.cost,
         "duration_ms": r.duration_ms,
         "retries": r.retries,
+    }
+
+
+def _result_summary_dict(r: dict) -> dict:
+    """Result 转储（dict）的对外摘要——与 _result_summary 同形（存档读回用）。"""
+    if not r:
+        return {}
+    return {
+        "success": r.get("success"),
+        "output": r.get("output"),
+        "error": r.get("error"),
+        "cost": (r.get("usage") or {}).get("cost", 0.0),
+        "duration_ms": r.get("duration_ms", 0),
+        "retries": r.get("retries", 0),
     }

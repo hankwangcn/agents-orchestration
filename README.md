@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/hankwangcn/agents-orchestration/blob/main/LICENSE)
 [![Language](https://img.shields.io/github/languages/top/hankwangcn/agents-orchestration?color=3572A5)](https://github.com/hankwangcn/agents-orchestration)
-[![Tests](https://img.shields.io/badge/tests-435%2F435%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
+[![Tests](https://img.shields.io/badge/tests-468%2F468%20passing-brightgreen)](https://github.com/hankwangcn/agents-orchestration/tree/main/tests)
 
 **结果导向的 Agent 编排框架（Result-driven Orchestration）——框架统一调度，只管理"任务 → 结果"，不监控 agent 内部状态。**
 
@@ -30,8 +30,11 @@
 | **并发调度** | asyncio 事件驱动并发派发；per-agent 并发上限与速率配额强制执行；单实例可并发运行多个 DAG，状态隔离 |
 | **治理闭环** | 结果审计（对账 / 分配审计 / 剪枝审计 / 语义交叉校验——**只读、可复跑、确定性**）+ 反思/判定（目标达成度，非确定、成本单列、与审计分离留痕）+ 成本核算（含失败成本与剪枝沉没成本），三件套在 run 收尾时自动产出并进报告 |
 | **学习层闭环** | 确定性复盘 → 规则提取（证据强度分级：`objective` 确定性事实 / `judgment` LLM 判定，**禁止同级呈现**）→ **跨 run 经验库落盘**（SQLite，同 rule 累计命中次数与贡献 run 数）→ **回馈拆解提示词**：拆解引擎的经验注入接口在固定指令与用户目标之间插入指导块（注册表实测的可用模型 / 能力标签 + **跨 run 复现**的返工事实，每条带数值支撑）；`GET /api/lessons` / `ao lessons` 查看经验库 |
+| **运行存档（归档）** | 运行存档 = **过程事件流**（状态变更逐条落盘，可回放时间线）+ **终态报告**（治理/学习产物挂回），落在持久化底座、单 run 不可变——**唯一真源**；报告**可读回**（进程重启后仍在）、run 可**枚举**（`GET /api/runs` / `ao runs`），崩溃后 / 换进程后仍可查阅 |
+| **接入层 Web 页面** | 服务端渲染的 Web 页面（**同源、零构建、零 CORS**）：`GET /` 运行列表 + `GET /runs/{id}` 运行详情——**完整业务完成过程**（过程时间线 + 任务与结果 + 分配留痕 + 失败传播 + 治理 + 学习规则）。人读版是运行存档的**读时投影**（按需渲染、确定性、可复跑），不落盘成第二份真相 |
+| **叙述摘要（非确定）** | `POST /api/runs/{id}/narrative` / `ao narrate`：LLM 产出的一段人读总结——**显式触发、单独留痕、标注来源**，**不默认生成、不混入确定性报告**（同"判定 vs 审计"的分离口径） |
 | **可观测性** | 结构化日志（key=value）+ 指标聚合，直接供给审计器与学习引擎 |
-| **API 网关** | 框架以系统形态对外服务：目标拆解 / 提交 DAG / 查询进度 / 获取报告 / 取消运行 / agent 档案快照 / **跨 run 经验库**（`GET /api/lessons`） |
+| **API 网关** | 框架以系统形态对外服务：目标拆解 / 提交 DAG / 查询进度 / 获取报告 / 运行枚举 / 人读投影 / 取消运行 / agent 档案快照 / **跨 run 经验库**（`GET /api/lessons`） |
 
 ---
 
@@ -41,10 +44,12 @@
 
 ```
 接入层 → 规划层 → 调度层 → 执行层 → 治理层 → 学习层
-(API 网关) (拆解) (注册表/调度器) (适配器/Agent) (审计/成本/判定) (复盘→经验库→回馈拆解)
+(API 网关/Web/CLI) (拆解) (注册表/调度器) (适配器/Agent) (审计/成本/判定) (复盘→经验库→回馈拆解)
 ```
 
 核心设计原则：**解耦在协议面，稳定在解析组件**——与 agent 的耦合被压缩到"一个兼容端点"，稳定性兜底（双层校验、解析重试、注入面隔离）全部由框架解析组件吸收。
+
+**运行存档**（过程事件流 + 终态报告）落在持久化底座，是唯一真源；Web 页面 / `ao view` / 叙述摘要都是它的**读时投影**（按需渲染）。
 
 ---
 
@@ -295,6 +300,26 @@ agents:
 
 程序内也可用同一份配置：`registry = AgentRegistry.from_config("agents.yaml")`；自定义传输（如进程内函数）传 `adapter_factory` 覆盖默认工厂即可。
 
+### 4.3 运行存档与 Web 页面（展示完整完成过程）
+
+启用 `state_store` 后，每个 run 的**过程事件流**（状态变更逐条落盘）与**终态报告**即成为运行存档——框架的**唯一真源**。人读版是它的**读时投影**（按需渲染），Gateway 直接以服务端渲染的 HTML 呈现，**同源、零构建、零 CORS**：
+
+```bash
+# 浏览器打开（与网关同源）
+http://127.0.0.1:8000/                 # 运行列表（run 枚举）
+http://127.0.0.1:8000/runs/{run_id}    # 运行详情：过程时间线 + 任务 + 治理 + 学习
+```
+
+```bash
+ao runs                       # 运行枚举（跨进程可发现已有 run）
+ao view <run_id>              # 运行存档人读视图（完整过程 + 治理 + 学习，按需渲染）
+ao narrate <run_id>           # 显式生成叙述摘要（LLM，非确定；需叙述引擎）
+```
+
+对应的只读 JSON 端点：`GET /api/runs`（枚举）、`GET /api/runs/{id}/view`（**确定性投影**，可复跑）、`POST /api/runs/{id}/narrative`（**非确定**，LLM 产出、单独留痕、不默认生成）。
+
+> **三分离**：运行存档（过程 + 终态）＝不可变真源；人读投影＝确定性渲染；叙述摘要＝非确定 LLM 产出。前两者可复跑、零成本，后者显式触发、标注来源、不混入。见 [examples/web_run_demo.html](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/demo/web_run_demo.html)。
+
 ### 5. 真实模型端到端冒烟
 
 ```bash
@@ -341,6 +366,15 @@ export DEEPSEEK_API_KEY=sk-...       # 拆解引擎用真实 LLM；agent 侧仍�
 ```
 
 覆盖链路：真实网关 + 真实 CLI；一次 run 同时产出三类**客观**返工信号（失败错误码复现 → FP、降级分配 → DEG、剪枝 → PRU）与判定结论（JUD-1，`judgment` 分级）→ 规则落盘 SQLite 经验库 → **单 run 未达复现门槛故不进提示词** → 第二次 run 后经验库累积（命中 2 次 / 贡献 2 个 run）→ 指导块注入拆解提示词（带"既往 2 次运行命中 2 次"数值支撑），并校验提示词结构稳定（前缀=固定指令、结尾=用户目标）与客观/判定分节呈现；末尾以真实 CLI 走真实 HTTP 打印 `ao report`（审计/成本/学习三件套 + 判定 + 分配 + 剪枝）与 `ao lessons`（跨 run 经验库）。20/20 断言通过。
+
+### 10. 运行存档与 Web 页面冒烟（无需 API key）
+
+```bash
+.venv/bin/python scripts/smoke_archive.py                    # 仅校验
+.venv/bin/python scripts/smoke_archive.py --demo-dir out/    # 另写出 Web 演示页
+```
+
+覆盖链路：真实网关 + 真实 CLI；一次 run（含失败 / 剪枝 / 降级）→ **过程事件流**逐条落盘（首尾 run_started / run_finished，含派发 / 完成 / 剪枝）→ **运行枚举**（`/api/runs`、`ao runs`）→ **人读投影**（`/api/runs/{id}/view`，同一份存档两次调用**逐字节一致** = 确定性可复跑）→ **叙述摘要**（默认空 → 显式 `POST /narrative` → 标注 `source=llm` / `deterministic=false` → 单独留痕并入视图独立字段）→ **Web 页面**（`/` 含 run 链接、`/runs/{id}` 含过程时间线 / 任务 / 学习规则，未知 run 走 HTML 错误页）→ 真实 CLI `ao runs` / `ao view`。示例页见 [docs/demo/web_run_demo.html](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/demo/web_run_demo.html)。
 
 ---
 
@@ -395,9 +429,10 @@ registry = AgentRegistry.from_config(cfg, adapter_factory=lambda e: InProcessAda
 
 ## 设计文档
 
-- [架构文档](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/architecture.md) — 分层架构、失败处理（剪枝 / 竞态）、数据模型
+- [架构文档](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/architecture.md) — 分层架构、失败处理（剪枝 / 竞态）、数据模型、运行存档
 - [消息沟通协议](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/messaging-protocol.md) — 协议模板、稳定性兜底（§7）
 - [架构总览图（HTML）](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/architecture-diagram.html)
+- [运行详情页示例（HTML）](https://github.com/hankwangcn/agents-orchestration/blob/main/docs/demo/web_run_demo.html) — 接入层 Web 页面（完整过程）单文件示例
 
 ---
 
@@ -423,9 +458,11 @@ agents-orchestration/
 │   ├── reflection.py        # 反思/判定（治理层）：最终交付 × 原始目标 → 判定结论（advisory）
 │   ├── learning.py          # 自我学习：启发式规则提取（八类）+ 证据强度分级
 │   ├── lessons.py           # 经验库与提示词顾问：跨 run 聚合 + 回馈拆解提示词
-│   ├── state_store.py       # 断点持久化：SQLite StateStore（事件驱动落盘 + 学习经验库）
+│   ├── report_view.py       # 运行存档人读投影：确定性视图 + 文本 / HTML 渲染（接入层 Web / CLI）
+│   ├── narrative.py         # 叙述摘要（LLM，非确定）：显式生成、单独留痕
+│   ├── state_store.py       # 断点持久化 + 运行存档：SQLite（事件流 / 报告 / 经验库 / 叙述）
 │   ├── cli.py               # CLI `ao`：网关瘦客户端（仅标准库 urllib）
-│   ├── api/gateway.py       # API 网关：RunManager + FastAPI 端点
+│   ├── api/gateway.py       # API 网关：RunManager + FastAPI 端点 + Web 页面（同源）
 │   └── adapters/            # Agent 适配器：base（协议装配/双层校验/重试/成本回填）
 │                            #   + deepseek（OpenAI 兼容 HTTP）+ inprocess（免 HTTP）
 ├── scripts/
@@ -435,9 +472,10 @@ agents-orchestration/
 │   ├── smoke_decompose.py    # 目标 → DAG → 结果 冒烟（真实拆解 + mock 执行 + 真实 CLI）
 │   ├── smoke_reflection.py   # 反思/判定冒烟（目标基准 + 独立 judge + advisory 边界）
 │   ├── smoke_learning.py     # 学习层闭环冒烟（复盘 → 经验库落盘 → 回馈拆解提示词）
+│   ├── smoke_archive.py      # 运行存档 + Web 页面冒烟（事件流 → 人读投影 → Web / 叙述）
 │   └── smoke_resume.py       # 断点恢复冒烟（崩溃 → 恢复 → 续跑）
-├── tests/                   # 435 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 反思判定 / 学习闭环 / 并发 / 网关 / 断点 / CLI / 适配器）
-├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告
+├── tests/                   # 468 项测试（解析组件 / 拆解 / 剪枝 / 调度 / 治理 / 反思判定 / 学习闭环 / 运行存档 / Web / 并发 / 网关 / 断点 / CLI / 适配器）
+├── docs/                    # 架构文档 / 消息协议 / 架构图 / 可视化示例报告 + Web 页面示例
 └── pyproject.toml           # 包配置（`ao` 命令入口）
 ```
 
@@ -447,10 +485,10 @@ agents-orchestration/
 
 ```bash
 pip install -e ".[dev,gateway]"
-pytest        # 435/435 全绿
+pytest        # 468/468 全绿
 ```
 
-测试覆盖重点：依赖分析（拓扑分层/并行前沿/可达性/成环与引用校验，23 项）、层职责切分（规划层资源统计器 × 调度层资源协调器）、解析组件（最严格模块，47 项：信封校验 + output_schema 强校验 + 重试兜底）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内适配器（str/dict 返回、解析重试、免 HTTP 全流程）、配置批量注册（YAML/JSON/环境变量取 key/自定义工厂）、采集侧 wall-clock 超时、学习层闭环（证据分级 / 经验库落盘与跨 run 聚合 / 复现门槛 / 提示词注入与客观-判定分离，43 项）、CLI 学习层出口（报告打印审计/成本/学习 + `ao lessons`，5 项）。
+测试覆盖重点：依赖分析（拓扑分层/并行前沿/可达性/成环与引用校验，23 项）、层职责切分（规划层资源统计器 × 调度层资源协调器）、解析组件（最严格模块，47 项：信封校验 + output_schema 强校验 + 重试兜底）、剪枝算法（反向可达性，多 final 语义）、并发竞态、速率限制、治理三件套、网关生命周期、断点恢复（A+B 策略）、CLI 命令与 payload 构造、交互 shell（run_id 记忆 / 引导式 submit / 错误不退出）、进程内适配器（str/dict 返回、解析重试、免 HTTP 全流程）、配置批量注册（YAML/JSON/环境变量取 key/自定义工厂）、采集侧 wall-clock 超时、学习层闭环（证据分级 / 经验库落盘与跨 run 聚合 / 复现门槛 / 提示词注入与客观-判定分离，43 项）、CLI 学习层出口（报告打印审计/成本/学习 + `ao lessons`，5 项）、运行存档（事件流 / 报告读回 / 运行枚举 / 叙述留痕 / 级联清理 + 底座退化，10 项）、人读投影（确定性 / 结构 / 转义 / 运行中投影 / HTML 渲染，10 项）、网关存档与 Web（过程事件流落盘 / 重启后报告读回 / 运行枚举与投影端点 / Web 页面 / 叙述端点 + 故障映射，9 项）、CLI 存档出口（`ao runs` / `ao view` / `ao narrate`，4 项）。
 
 ---
 

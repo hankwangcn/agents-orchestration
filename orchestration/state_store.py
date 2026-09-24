@@ -14,9 +14,15 @@
 
 存储格式：整 DAG JSON（任务数小，整存简单可靠）+ assignments 表 +
 prune_reports（随 run 行存）+ learning_lessons 表（学习层经验库——跨 run
-记忆，回馈拆解提示词）。SQLite 单文件、零依赖；可换 Postgres
-（StateStore 抽象，实现同签名即可——经验库为可选能力，未实现则退化为
-"无跨 run 记忆"）。
+记忆，回馈拆解提示词）+ run_events 表（**过程归档**：状态变更逐条落盘的
+事件流）+ run_narratives 表（人读叙述摘要，**非确定**、显式生成、单独留痕）。
+SQLite 单文件、零依赖；可换 Postgres（StateStore 抽象，实现同签名即可——
+经验库、事件流、叙述摘要均为可选能力，未实现则各自退化）。
+
+**归档分层（对话共识）**：运行存档 = 过程（事件流）+ 终态报告（report_json），
+属**持久化底座**（state face），是唯一真源、单 run 不可变；治理层是其生产者
+之一（审计/成本/判定挂回报告），学习层是消费者（读同一份 → 经验库）。人读版
+是**读时投影**（按需渲染，不落盘成第二份真相）。
 """
 from __future__ import annotations
 
@@ -59,6 +65,22 @@ CREATE TABLE IF NOT EXISTS learning_lessons (
     evidence   TEXT NOT NULL DEFAULT '{}',
     created_at TEXT,
     PRIMARY KEY (run_id, rule_id)
+);
+CREATE TABLE IF NOT EXISTS run_events (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id   TEXT NOT NULL,
+    ts       TEXT NOT NULL,
+    event    TEXT NOT NULL,
+    task_id  TEXT NOT NULL DEFAULT '',
+    agent_id TEXT NOT NULL DEFAULT '',
+    data     TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, id);
+CREATE TABLE IF NOT EXISTS run_narratives (
+    run_id     TEXT PRIMARY KEY,
+    created_at TEXT,
+    model      TEXT NOT NULL DEFAULT '',
+    text       TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -106,6 +128,45 @@ class StateStore(ABC):
     def load_lessons(self) -> list[dict]:
         """读全部经验库原始行（聚合交给 lessons.build_digest）。"""
         return []
+
+    # -- 归档（过程事件流 + 报告读回 + 运行枚举；可选能力默认退化）--
+
+    def append_event(
+        self,
+        run_id: str,
+        event: str,
+        task_id: str = "",
+        agent_id: str = "",
+        data: Optional[dict] = None,
+    ) -> None:
+        """追加一条过程事件（状态变更逐条落盘，run 内时序可回放）。
+
+        未支持事件流的实现退化为 no-op——run 照常收尾，只是过程不可回放。
+        """
+        return None
+
+    def load_events(self, run_id: str) -> list[dict]:
+        """读一个 run 的事件流（按发生顺序）。"""
+        return []
+
+    def load_report(self, run_id: str) -> Optional[dict]:
+        """读回已落盘的终态报告（dict）；未落盘或未支持返回 None。
+
+        进程重启后运行存档仍可读——这是人读投影（按需渲染）的唯一真源。
+        """
+        return None
+
+    def list_runs(self, limit: int = 50) -> list[dict]:
+        """运行枚举（最近在前）：崩溃后/换进程后仍可发现已有 run。"""
+        return []
+
+    def save_narrative(self, run_id: str, narrative: dict) -> None:
+        """落盘人读**叙述摘要**（非确定、显式生成、单独留痕，不混入确定性报告）。"""
+        return None
+
+    def load_narrative(self, run_id: str) -> Optional[dict]:
+        """读回叙述摘要（None = 未生成）。"""
+        return None
 
 
 class SqliteStateStore(StateStore):
@@ -257,6 +318,8 @@ class SqliteStateStore(StateStore):
             self._conn.execute(
                 "DELETE FROM learning_lessons WHERE run_id=?", (run_id,)
             )
+            self._conn.execute("DELETE FROM run_events WHERE run_id=?", (run_id,))
+            self._conn.execute("DELETE FROM run_narratives WHERE run_id=?", (run_id,))
             self._conn.execute("DELETE FROM runs WHERE run_id=?", (run_id,))
             self._conn.commit()
 
@@ -326,6 +389,126 @@ class SqliteStateStore(StateStore):
                 "created_at": r["created_at"] or "",
             })
         return out
+
+    # -- 归档（过程事件流 + 报告读回 + 运行枚举）--
+
+    def append_event(
+        self,
+        run_id: str,
+        event: str,
+        task_id: str = "",
+        agent_id: str = "",
+        data: Optional[dict] = None,
+    ) -> None:
+        """追加一条过程事件（事件驱动：状态变更即写，崩溃点过程最新）。"""
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO run_events (run_id, ts, event, task_id, agent_id, data)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id, _ts(), event, task_id or "", agent_id or "",
+                    json.dumps(data or {}, ensure_ascii=False, default=str),
+                ),
+            )
+            self._conn.commit()
+
+    def load_events(self, run_id: str) -> list[dict]:
+        """读一个 run 的事件流（按发生顺序 = 自增 id 升序）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT ts, event, task_id, agent_id, data FROM run_events
+                WHERE run_id=? ORDER BY id
+                """,
+                (run_id,),
+            ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            try:
+                data = json.loads(r["data"] or "{}")
+            except (ValueError, TypeError):
+                data = {}
+            out.append({
+                "ts": r["ts"] or "",
+                "event": r["event"],
+                "task_id": r["task_id"] or "",
+                "agent_id": r["agent_id"] or "",
+                "data": data if isinstance(data, dict) else {},
+            })
+        return out
+
+    def load_report(self, run_id: str) -> Optional[dict]:
+        """读回已落盘的终态报告（dict）；未落盘返回 None。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT report_json FROM runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+        if row is None or not row["report_json"]:
+            return None
+        try:
+            return json.loads(row["report_json"])
+        except (ValueError, TypeError):
+            return None
+
+    def list_runs(self, limit: int = 50) -> list[dict]:
+        """运行枚举（最近在前；同秒并列按写入顺序倒序）。"""
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT run_id, goal, run_status, updated_at,
+                       (report_json IS NOT NULL) AS has_report
+                FROM runs ORDER BY updated_at DESC, rowid DESC LIMIT ?
+                """,
+                (max(0, int(limit)),),
+            ).fetchall()
+        return [
+            {
+                "run_id": r["run_id"],
+                "goal": r["goal"] or "",
+                "run_status": r["run_status"],
+                "updated_at": r["updated_at"] or "",
+                "has_report": bool(r["has_report"]),
+            }
+            for r in rows
+        ]
+
+    def save_narrative(self, run_id: str, narrative: dict) -> None:
+        """落盘叙述摘要（按 run 覆盖；非确定产物，单独留痕）。"""
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO run_narratives (run_id, created_at, model, text)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    created_at=excluded.created_at,
+                    model=excluded.model,
+                    text=excluded.text
+                """,
+                (
+                    run_id,
+                    narrative.get("created_at") or _ts(),
+                    narrative.get("model") or "",
+                    narrative.get("text") or "",
+                ),
+            )
+            self._conn.commit()
+
+    def load_narrative(self, run_id: str) -> Optional[dict]:
+        """读回叙述摘要（None = 未生成）。"""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT created_at, model, text FROM run_narratives WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "created_at": row["created_at"] or "",
+            "model": row["model"] or "",
+            "text": row["text"] or "",
+        }
 
 
 def _ts() -> str:

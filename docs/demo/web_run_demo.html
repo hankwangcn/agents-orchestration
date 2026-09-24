@@ -1,0 +1,49 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>run d8feb05fb949</title><style>
+:root{--ink:#0f172a;--ink2:#334155;--ink3:#64748b;--ink4:#94a3b8;
+ --line:#e2e8f0;--bg:#f1f5f9;--card:#fff;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+ background:var(--bg);color:var(--ink);line-height:1.55;}
+a{color:#0284c7;text-decoration:none;} a:hover{text-decoration:underline;}
+.wrap{max-width:1080px;margin:0 auto;padding:24px 20px 60px;}
+header{background:linear-gradient(135deg,#0f172a,#1e293b 60%,#312e81 130%);
+ color:#fff;border-radius:16px;padding:22px 26px;box-shadow:0 10px 30px rgba(15,23,42,.18);}
+header .top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.logo{width:46px;height:46px;border-radius:12px;flex:0 0 auto;
+ background:linear-gradient(135deg,#0ea5e9,#6366f1);display:flex;align-items:center;
+ justify-content:center;font-weight:800;font-size:17px;color:#fff;}
+h1{font-size:20px;font-weight:700;} header .sub{color:#cbd5e1;font-size:12.5px;margin-top:3px;}
+.badge{display:inline-block;padding:2px 10px;border-radius:999px;color:#fff;
+ font-size:11px;font-weight:600;white-space:nowrap;}
+.cards{display:flex;flex-wrap:wrap;gap:12px;margin:18px 0;}
+.cell{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 18px;
+ min-width:104px;text-align:center;} .cell-v{font-size:19px;font-weight:700;}
+.cell-k{font-size:11.5px;margin-top:2px;color:var(--ink3);}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 20px;margin:14px 0;
+ box-shadow:0 1px 3px rgba(15,23,42,.04);}
+.card h2{font-size:14.5px;margin:0 0 12px;color:var(--ink);}
+table{border-collapse:collapse;width:100%;font-size:12.5px;}
+th{text-align:left;color:var(--ink3);font-weight:600;padding:6px 8px;border-bottom:2px solid var(--line);}
+td{padding:6px 8px;border-bottom:1px solid #eef2f7;vertical-align:top;}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;}
+.muted{color:var(--ink4);}
+.tl{list-style:none;font-size:12.5px;}
+.tl li{display:flex;gap:12px;padding:5px 0;border-bottom:1px dashed #eef2f7;}
+.tl .ts{color:var(--ink4);font-family:ui-monospace,monospace;font-size:11.5px;white-space:nowrap;min-width:150px;}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
+.chips span{font-size:10.5px;color:var(--ink2);background:#eef2f7;border:1px solid var(--line);
+ border-radius:999px;padding:2px 8px;}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;}
+.grid3 .card{margin:0;}
+ul.tight{margin:6px 0;padding-left:18px;font-size:12.5px;} ul.tight li{margin:3px 0;}
+.notice{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 14px;
+ font-size:12px;color:#92400e;}
+.narrative{background:#faf5ff;border:1px solid #e9d5ff;border-radius:12px;padding:14px 16px;font-size:13px;}
+footer{margin-top:26px;text-align:center;font-size:11.5px;color:var(--ink4);}
+.runrow td{padding:9px 8px;} .runrow .goal{max-width:520px;}
+</style></head><body><div class="wrap">
+<header><div class="top"><div class="logo">AO</div>
+<div><h1>run d8feb05fb949</h1><div class="sub">把抓取到的两地价格整理成一份比价报告</div></div>
+</div></header><div class="cards"><div class="cell"><div class="cell-v" style="color:#f59e0b">partial</div><div class="cell-k">最终状态</div></div><div class="cell"><div class="cell-v" style="color:#16a34a">1/4</div><div class="cell-k">成功/总数</div></div><div class="cell"><div class="cell-v" style="color:#0284c7">25%</div><div class="cell-k">成功率</div></div><div class="cell"><div class="cell-v" style="color:#6d28d9">10</div><div class="cell-k">过程事件</div></div><div class="cell"><div class="cell-v" style="color:#0f172a">$0.0007</div><div class="cell-k">总成本</div></div><div class="cell"><div class="cell-v" style="color:#0f172a">255ms</div><div class="cell-k">耗时</div></div></div><div class="card"><h2>过程时间线（10 个事件）</h2><ul class="tl"><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>运行开始（4 个任务）</span></li><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>派发 a → flaky（exact）</span></li><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>派发 d → translator（degraded）</span></li><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>完成 a：失败（fail_injected）</span></li><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>失败传播剪枝：根失败 a → 取消 1 个任务</span></li><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>完成 d：成功（171ms，$0.000227）</span></li><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>派发 b → flaky（exact）</span></li><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>完成 b：失败（fail_injected）</span></li><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>失败传播剪枝：根失败 b → 取消 0 个任务</span></li><li><span class="ts">2026-09-24T07:03:12+00:00</span><span>运行结束：partial（总成本 $0.0007，耗时 255ms）</span></li></ul></div><div class="card"><h2>任务与结果</h2><table><thead><tr><th>任务</th><th>描述</th><th>依赖</th><th>状态</th><th>分配</th><th>耗时</th><th>成本</th></tr></thead><tbody><tr><td><b>a</b></td><td>抓取站点 A 的价格</td><td><span class="mono">—</span></td><td><span class="badge" style="background:#dc2626">失败</span> <span class="muted">fail_injected</span></td><td>flaky<div class="muted mono">exact</div></td><td>11ms</td><td>$0.0002</td></tr><tr><td><b>b</b></td><td>抓取站点 B 的价格</td><td><span class="mono">—</span></td><td><span class="badge" style="background:#dc2626">失败</span> <span class="muted">fail_injected</span></td><td>flaky<div class="muted mono">exact</div></td><td>3ms</td><td>$0.0002</td></tr><tr><td><b>c</b></td><td>合并 A/B 价格</td><td><span class="mono">a</span></td><td><span class="badge" style="background:#94a3b8">已取消</span></td><td>—<div class="muted mono"></div></td><td>0ms</td><td>$0.0000</td></tr><tr><td><b>d</b></td><td>生成比价报告</td><td><span class="mono">—</span></td><td><span class="badge" style="background:#16a34a">成功</span></td><td>translator<div class="muted mono">degraded</div></td><td>171ms</td><td>$0.0002</td></tr></tbody></table></div><div class="card"><h2>分配留痕（三级策略）</h2><table><thead><tr><th>任务</th><th>agent</th><th>匹配</th><th>说明</th></tr></thead><tbody><tr><td><b>a</b></td><td>flaky</td><td class="mono">exact</td><td>覆盖能力：[]</td></tr><tr><td><b>b</b></td><td>flaky</td><td class="mono">exact</td><td>覆盖能力：[]</td></tr><tr><td><b>d</b></td><td>translator</td><td class="mono">degraded</td><td>无匹配 agent（model=ghost, caps=[&#x27;nonexistent_cap&#x27;]），降级默认</td></tr></tbody></table></div><div class="card"><h2>失败传播与剪枝</h2><div style="margin:6px 0"><span class="badge" style="background:#dc2626">根失败</span> <b>a</b> — fail_injected（重试 0 次耗尽）</div><div class="muted" style="margin:3px 0 3px 18px;font-size:12.5px">✂ <b>c</b>（取消时 pending）— downstream_chain</div><div style="margin:6px 0"><span class="badge" style="background:#dc2626">根失败</span> <b>b</b> — fail_injected（重试 0 次耗尽）</div></div><div class="grid3"><div class="card"><h2>审计 <span class="badge" style="background:#f59e0b">warning</span></h2><ul class="tight"><li>2 次剪枝（1 任务被剪）；1 次降级分配</li></ul></div><div class="card"><h2>成本</h2><ul class="tight"><li>总成本 <b>$0.0007</b>（in 1808 + out 185 tokens）</li><li>失败消耗 $0.0005　剪枝沉没 $0.0</li><li>exact：$0.000464</li><li>degraded：$0.000227</li></ul></div><div class="card"><h2>学习层规则（证据强度分级：客观 / 判定）</h2><table><thead><tr><th>规则</th><th>严重度</th><th>分级</th><th>结论 / 建议</th></tr></thead><tbody><tr><td class="mono"><b>FP-fail_injected</b></td><td><span class="badge" style="background:#f59e0b">medium</span></td><td>客观</td><td>错误码 fail_injected 出现 2 次：该类型任务反复失败，拆解时需规避或换 agent<div class="muted">→ 拆解 prompt 中对该类任务标注更高能力要求，或分配时优先匹配专用 agent</div></td></tr><tr><td class="mono"><b>DEG-1</b></td><td><span class="badge" style="background:#f59e0b">medium</span></td><td>客观</td><td>1/3 任务降级分配（33%），拆解建议的 model 与注册表匹配度差<div class="muted">→ 核对拆解 prompt 的 model 建议逻辑，或注册表补充对应模型 agent</div></td></tr><tr><td class="mono"><b>PRU-1</b></td><td><span class="badge" style="background:#f59e0b">medium</span></td><td>客观</td><td>2 次失败传播触发剪枝，共剪 1 个任务：拆解存在无意义并行或依赖过深<div class="muted">→ 复盘拆解 DAG：减少不必要并行、合并低价值下游；根失败任务可降级/换 agent 重试</div></td></tr></tbody></table></div></div><div class="card"><h2>叙述摘要 <span class="badge" style="background:#6d28d9">非确定 · LLM 生成</span></h2><div class="narrative">本次运行抓取了两地价格，合并与比价报告未能完成：一处抓取失败触发剪枝。</div><div class="muted mono" style="margin-top:8px">model=smoke-narrator · generated_at=2026-09-24T07:03:12+00:00</div></div><footer>Agents Orchestration · 由运行存档按需渲染（确定性投影） · 2026-09-24 15:03:12 · 唯一真源：运行存档；本页为按需读时投影</footer></div></body></html>

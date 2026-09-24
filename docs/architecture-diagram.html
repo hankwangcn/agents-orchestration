@@ -159,14 +159,21 @@
       <div class="layer-head">
         <span class="layer-badge" style="--lc:#0284c7">接入层</span>
         <span class="layer-en">ACCESS</span>
-        <span class="layer-desc">框架对外的全部入口——提交目标、查询进度、获取报告</span>
+        <span class="layer-desc">框架对外的全部入口——提交目标、查询进度、获取报告、查看完整完成过程</span>
       </div>
       <div class="layer-body">
         <div class="card">
           <div class="badge" style="--cc:#0284c7">API</div>
           <div class="card-main">
             <div class="card-title">API 网关</div>
-            <div class="card-desc">FastAPI REST（内置 run 生命周期管理）：目标拆解 <span class="path">/api/decompose</span> / 提交 DAG / 进度快照 / 收尾报告 / 运行指标 / 取消 run / 断点恢复 / 人工 resolve / agent 档案。框架从「库」到「系统」的入口，协议通信不暴露到 HTTP。</div>
+            <div class="card-desc">FastAPI REST（内置 run 生命周期管理）：目标拆解 <span class="path">/api/decompose</span> / 提交 DAG / 进度快照 / 收尾报告 / 运行枚举 <span class="path">/api/runs</span> / 人读投影 <span class="path">/api/runs/{id}/view</span> / 运行指标 / 取消 run / 断点恢复 / 人工 resolve / agent 档案。框架从「库」到「系统」的入口，协议通信不暴露到 HTTP。</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="badge" style="--cc:#0284c7">Web</div>
+          <div class="card-main">
+            <div class="card-title">Web 页面 / 人读投影</div>
+            <div class="card-desc">服务端渲染的运行列表 <span class="path">/</span> 与详情 <span class="path">/runs/{id}</span>（<b>同源、零构建、零 CORS</b>）：展示<b>完整业务完成过程</b>——过程时间线 + 任务与结果 + 分配留痕 + 失败传播 + 治理 + 学习。人读版是<b>运行存档的读时投影</b>（按需渲染、确定性、可复跑），不落盘成第二份真相；叙述摘要（LLM）显式触发、单独留痕。</div>
           </div>
         </div>
         <div class="card">
@@ -362,8 +369,8 @@
         </svg>
       </div>
       <div class="flow-tag">
-        <span class="ft-main">AuditReport / PruneReport / ReflectionReport</span>
-        <span class="ft-sub">确定性对账 · 成本 · 剪枝证据（root_failure + pruned 清单）· 目标达成度（advisory）</span>
+        <span class="ft-main">AuditReport / PruneReport / ReflectionReport → 运行存档（落盘）</span>
+        <span class="ft-sub">确定性对账 · 成本 · 剪枝证据（root_failure + pruned 清单）· 目标达成度（advisory）；治理产物挂回报告，学习层读同一份（环形、非两级传递）</span>
       </div>
     </div>
 
@@ -416,7 +423,7 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v2.0 · 2026-09-23 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固 + 规划层接入与切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语）+ 执行层详细设计①②（output_schema 强校验 / info 采集超时）+ 治理层详细设计①（反思/判定：run 级目标 + 独立 judge）+ 学习层闭环（复盘分级 → 跨 run 经验库 → 回馈拆解提示词）（目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习闭环 → 崩溃恢复）· 435/435 测试全绿
+  <b>Agents Orchestration</b> · 架构 v2.1 · 2026-09-24 · 阶段一~四全部完成 + 断点持久化 + 多 run 并发加固 + 规划层接入与切分（依赖分析独立 / 注册表分层）+ 调度层详细设计①（取消下发统一原语）+ 执行层详细设计①②（output_schema 强校验 / info 采集超时）+ 治理层详细设计①（反思/判定：run 级目标 + 独立 judge）+ 学习层闭环（复盘分级 → 跨 run 经验库 → 回馈拆解提示词）+ 接入层（运行存档：过程事件流 + 报告读回 + 运行枚举；Web 页面 + 人读投影；叙述摘要）（目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习闭环 → 运行存档 → 崩溃恢复）· 468/468 测试全绿
 </footer>
 
 </div>

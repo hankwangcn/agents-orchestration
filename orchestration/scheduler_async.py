@@ -164,7 +164,7 @@ class AsyncScheduler:
 
         if self._metrics:
             self._metrics.begin_run(run_id, len(dag.tasks))
-        log_event("run_started", run_id=run_id, dag_size=len(dag.tasks))
+        self._emit(run_id, "run_started", dag_size=len(dag.tasks))
         self._persist(ctx)
 
         while not dag.all_terminal():
@@ -198,8 +198,8 @@ class AsyncScheduler:
                         self._metrics.task_launched(
                             run_id, assignment.agent_id, assignment.match_type
                         )
-                    log_event(
-                        "task_launched", run_id=run_id, task_id=tid,
+                    self._emit(
+                        run_id, "task_launched", task_id=tid,
                         agent_id=assignment.agent_id,
                         match_type=assignment.match_type,
                     )
@@ -228,8 +228,8 @@ class AsyncScheduler:
                 task = dag.tasks[tid]
                 if task.status in (TaskStatus.CANCELLED, TaskStatus.SKIPPED):
                     # 晚到结果直接丢弃（§5.3）：不写 result、不计健康度
-                    log_event(
-                        "result_dropped", run_id=run_id, task_id=tid,
+                    self._emit(
+                        run_id, "result_dropped", task_id=tid,
                         reason="task_cancelled",
                     )
                     continue
@@ -243,8 +243,8 @@ class AsyncScheduler:
                     ctx.prune_reports.append(report)
                     if self._metrics:
                         self._metrics.pruned(run_id, len(report.pruned))
-                    log_event(
-                        "prune", run_id=run_id, root_failure=tid,
+                    self._emit(
+                        run_id, "prune", task_id=tid,
                         pruned_count=len(report.pruned),
                         pruned_final=report.pruned_final,
                     )
@@ -268,8 +268,8 @@ class AsyncScheduler:
         )
         if self._metrics:
             self._metrics.finish_run(run_id, final_status)
-        log_event(
-            "run_finished", run_id=run_id, final_status=final_status,
+        self._emit(
+            run_id, "run_finished", final_status=final_status,
             total_cost=round(total_cost, 4), duration_ms=ctx.duration_ms,
         )
         self._persist(ctx, run_status=final_status)
@@ -309,6 +309,25 @@ class AsyncScheduler:
             assignments=list(ctx.assignments.values()),
             prune_reports=ctx.prune_reports,
         )
+
+    def _emit(self, run_id: str, event: str, task_id: str = "",
+              agent_id: str = "", **data: object) -> None:
+        """发射一次过程事件：结构化日志 + **过程归档**（事件流）落盘。
+
+        日志与归档共用**同一处调用点、同一套事件名**——避免两套事件词汇表
+        分叉。存储未启用或未实现事件流时仅记日志（过程不可回放，收尾不受
+        影响）。事件是过程时序的唯一真源（人读时间线由它投影而来）。
+        """
+        fields: dict[str, object] = dict(data)
+        if task_id:
+            fields["task_id"] = task_id
+        if agent_id:
+            fields["agent_id"] = agent_id
+        log_event(event, run_id=run_id, **fields)
+        if self._store is not None:
+            self._store.append_event(
+                run_id, event, task_id=task_id, agent_id=agent_id, data=dict(data)
+            )
 
     async def resume_run(
         self,
@@ -358,10 +377,7 @@ class AsyncScheduler:
             ):
                 task.status = TaskStatus.PENDING
                 rerun.append(tid)
-        log_event(
-            "run_resumed", run_id=run_id,
-            rerun=rerun, interrupted=interrupted,
-        )
+        self._emit(run_id, "run_resumed", rerun=rerun, interrupted=interrupted)
         return await self.run(
             dag,
             run_id=run_id,
@@ -527,11 +543,12 @@ class AsyncScheduler:
                 tokens_in=result.usage.tokens_in,
                 tokens_out=result.usage.tokens_out,
             )
-        log_event(
-            "task_done", run_id=ctx.run_id, task_id=tid,
+        self._emit(
+            ctx.run_id, "task_done", task_id=tid, agent_id=assignment.agent_id,
             success=result.success,
             error_code=result.error.code if result.error else "",
             cost=result.usage.cost, duration_ms=result.duration_ms,
+            retries=result.retries,
         )
         self._persist(ctx)  # 任务终态落盘（事件驱动：崩溃点数据最新）
 
@@ -599,7 +616,7 @@ class AsyncScheduler:
         if pending:
             await asyncio.gather(*pending.values(), return_exceptions=True)
         self._persist(ctx)  # 外部取消落盘
-        log_event("run_cancelled", run_id=ctx.run_id, cancelled_tasks=len(ctx.dag.tasks))
+        self._emit(ctx.run_id, "run_cancelled", cancelled_tasks=len(ctx.dag.tasks))
 
     # ------------------------------------------------------------------
 

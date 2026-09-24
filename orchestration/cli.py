@@ -154,8 +154,22 @@ def cmd_serve(args: argparse.Namespace) -> int:
         reflector = Reflector(registry)
         print("[serve] 反思/判定已启用（提交带 --goal 时产出判定结论；"
               "注册带 judge 能力的 agent 可得独立判定）")
+    # 叙述摘要（LLM 产出、非确定、显式触发）：复用底层聊天入口
+    narrator = None
+    if args.no_narrate:
+        print("[serve] 叙述摘要已禁用（--no-narrate）")
+    else:
+        try:
+            from orchestration.narrative import make_default_narrator
+
+            narrator = make_default_narrator(model=args.decompose_model)
+            print("[serve] 叙述摘要已启用（POST /api/runs/{id}/narrative "
+                  "显式触发；非确定、单独留痕）")
+        except (ValueError, ImportError) as e:
+            print(f"[serve] 未启用叙述摘要：{e}")
     app, _ = create_app(
-        registry, state_store=store, decomposer=decomposer, reflector=reflector
+        registry, state_store=store, decomposer=decomposer, reflector=reflector,
+        narrator=narrator,
     )
     if store:
         print(f"[serve] 断点持久化已启用：{args.state_store}"
@@ -419,6 +433,101 @@ def cmd_metrics(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_runs(args: argparse.Namespace) -> int:
+    """运行枚举（跨进程可发现已有 run；需 state_store 持久化）。"""
+    resp = _request("GET", _api(args.url, f"/api/runs?limit={args.limit}"))
+    runs = resp.get("runs") or []
+    print(f"运行记录：{len(runs)} 条")
+    if not runs:
+        print("（暂无——提交 run 后出现；跨进程枚举需启用 state_store）")
+        return 0
+    rows = [
+        [r["run_id"], r.get("run_status", ""),
+         "已归档" if r.get("has_report") else "运行中",
+         (r.get("goal") or "-")[:36], r.get("updated_at", "")]
+        for r in runs
+    ]
+    print(_table(["run_id", "status", "存档", "goal", "updated_at"], rows))
+    print(f"\n查看详情：ao view <run_id>（Web：{args.url.rstrip('/')}/runs/<run_id>）")
+    return 0
+
+
+def cmd_view(args: argparse.Namespace) -> int:
+    """运行存档的人读视图（按需渲染，确定性投影）——完整过程 + 治理 + 学习。"""
+    run_id = _require_run_id(args)
+    resp = _request("GET", _api(args.url, f"/api/runs/{run_id}/view"))
+    _print_view(resp)
+    print(f"\nWeb 页面：{args.url.rstrip('/')}/runs/{run_id}")
+    return 0
+
+
+def cmd_narrate(args: argparse.Namespace) -> int:
+    """显式生成叙述摘要（LLM，非确定；单独留痕，不默认生成）。"""
+    run_id = _require_run_id(args)
+    resp = _request("POST", _api(args.url, f"/api/runs/{run_id}/narrative"), {})
+    print(f"叙述摘要（非确定来源 · LLM 生成 · model={resp.get('model', '')}"
+          f" · {resp.get('created_at', '')}）：\n")
+    print(resp.get("text", ""))
+    return 0
+
+
+def _print_view(view: dict) -> None:
+    """打印运行存档视图（CLI 侧格式化；数据来自确定性投影）。"""
+    a = view["archive"]
+    s = view["summary"]
+    print(f"run {view['run_id']}  {a['final_status']}"
+          f"  开始 {a['started_at'] or '-'}  结束 {a['finished_at'] or '-'}")
+    if view.get("goal"):
+        print(f"目标: {view['goal']}")
+    print(f"存档: 事件 {a['event_count']} 条 · 终态报告 "
+          f"{'已归档' if a['report_available'] else '未产出（运行中）'}"
+          f" · 总成本 ${a['total_cost']}")
+    print(f"任务: 总 {s['tasks_total']} | 成功 {s['success']} | 失败 {s['failed']}"
+          f" | 取消 {s['cancelled']} | 跳过 {s['skipped']} | 中断 {s['interrupted']}"
+          f" | 成功率 {s['success_rate'] * 100:.0f}%")
+    if view["timeline"]:
+        print("\n过程时间线：")
+        for e in view["timeline"]:
+            print(f"  {e['ts']}  {e['detail']}")
+    if view["tasks"]:
+        print("\n任务：")
+        rows = [
+            [t["task_id"], t["status"], t["agent_id"] or "-",
+             t["match_type"] or "-", f"{t['duration_ms']}ms", f"${t['cost']:.4f}",
+             t["error_code"] or ("RISK" if t["risk"] else "")]
+            for t in view["tasks"]
+        ]
+        print(_table(["task", "status", "agent", "match", "耗时", "成本",
+                      "错误/风险"], rows))
+    g = view["governance"]
+    if g.get("audit"):
+        au = g["audit"]
+        print(f"\n审计：{au.get('verdict')}  成功率 "
+              f"{(au.get('success_rate') or 0) * 100:.0f}%"
+              + ("  问题：" + "；".join(au.get("issues") or [])
+                 if au.get("issues") else ""))
+    if g.get("cost"):
+        c = g["cost"]
+        print(f"成本：总 ${c.get('total_cost')}  失败沉没 ${c.get('failed_cost')}"
+              f"  剪枝沉没 ${c.get('pruned_cost')}")
+    _print_reflection(g.get("reflection"))
+    rules = view["learning"]["rules"]
+    if rules:
+        print(f"\n学习：{len(rules)} 条规则（客观 "
+              f"{sum(1 for r in rules if r['tier'] == 'objective')} / 判定 "
+              f"{sum(1 for r in rules if r['tier'] == 'judgment')}）")
+        rows = [
+            [r["rule_id"], r["severity"],
+             "客观" if r["tier"] == "objective" else "判定", r["message"]]
+            for r in rules
+        ]
+        print(_table(["rule", "severity", "tier", "message"], rows))
+    if view.get("narrative"):
+        n = view["narrative"]
+        print(f"\n叙述摘要（非确定来源 · LLM 生成 · model={n.get('model', '')}）：")
+        print(f"  {n.get('text', '')}")
+
+
 def cmd_wait(args: argparse.Namespace) -> int:
     run_id = _require_run_id(args)
     deadline = time.monotonic() + args.timeout
@@ -515,8 +624,8 @@ def cmd_agents(args: argparse.Namespace) -> int:
 # 全部子命令名（tab 补全用）
 _COMMANDS = [
     "serve", "decompose", "submit", "status", "report", "metrics", "cancel",
-    "resume", "resolve", "wait", "agents", "lessons", "shell",
-    "help", "exit", "quit",
+    "resume", "resolve", "wait", "agents", "lessons", "runs", "view", "narrate",
+    "shell", "help", "exit", "quit",
 ]
 
 
@@ -557,13 +666,15 @@ def _setup_readline() -> None:
 def _shell_help() -> None:
     print("ao 交互 shell —— 逐行执行任意子命令，Ctrl-D / exit / quit 退出")
     print("可用命令：serve decompose submit status report metrics cancel resume "
-          "resolve wait agents lessons")
+          "resolve wait agents lessons runs view narrate")
     print("  help/exit/quit     本帮助 / 退出")
     print("  run_id 记忆        submit 后自动记住 run_id，status/report/等"
           "可省略")
     print("  decompose         目标 → DAG（--submit 一并提交）")
     print("  submit            不带文件时引导式提问构建 DAG（--goal 传原始目标）")
     print("  resolve           缺 task_id/action 时逐项引导")
+    print("  runs/view         运行枚举 / 运行存档人读视图（完整过程）")
+    print("  narrate           显式生成叙述摘要（LLM，非确定）")
     print("  tab 补全          命令名 + 文件名；历史持久化 ~/.ao_history")
 
 
@@ -641,6 +752,8 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="禁用规划层拆解引擎（POST /api/decompose 返回 400）")
     sp.add_argument("--no-reflect", action="store_true",
                     help="禁用治理层反思/判定（run 收尾不做目标达成度判定）")
+    sp.add_argument("--no-narrate", action="store_true",
+                    help="禁用叙述摘要（LLM 产出，POST /api/runs/{id}/narrative 返回 400）")
     sp.add_argument("--host", default="0.0.0.0")
     sp.add_argument("--port", type=int, default=8000)
     sp.set_defaults(func=cmd_serve)
@@ -691,6 +804,21 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="跨 run 经验库（学习层闭环记忆，需 state_store）")
     sp.add_argument("--limit", type=int, default=20, help="最多显示条数（默认 20）")
     sp.set_defaults(func=cmd_lessons)
+
+    sp = sub.add_parser("runs",
+                        help="运行枚举（跨进程可发现已有 run，需 state_store）")
+    sp.add_argument("--limit", type=int, default=50, help="最多显示条数（默认 50）")
+    sp.set_defaults(func=cmd_runs)
+
+    sp = sub.add_parser("view",
+                        help="运行存档人读视图（完整过程 + 治理 + 学习，按需渲染）")
+    sp.add_argument("run_id", nargs="?", help="缺省用会话记忆的 run_id（交互模式）")
+    sp.set_defaults(func=cmd_view)
+
+    sp = sub.add_parser("narrate",
+                        help="显式生成叙述摘要（LLM，非确定；需叙述引擎）")
+    sp.add_argument("run_id", nargs="?", help="缺省用会话记忆的 run_id（交互模式）")
+    sp.set_defaults(func=cmd_narrate)
 
     sp = sub.add_parser("shell", help="进入交互 shell（等价无子命令）")
     sp.set_defaults(func=cmd_shell)

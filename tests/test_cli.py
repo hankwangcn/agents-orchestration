@@ -453,3 +453,96 @@ class TestLearningLoopOutput:
         assert rc == 0
         out = capsys.readouterr().out
         assert "0 条规则" in out and "暂无" in out
+
+
+class TestArchiveOutput:
+    """运行存档出口（#48/#49）：`ao runs` 枚举 + `ao view` 人读视图 + `ao narrate`。"""
+
+    RUNS = {"runs": [
+        {"run_id": "r1", "goal": "整理比价报告", "run_status": "success",
+         "updated_at": "2026-01-01T00:00:05+00:00", "has_report": True},
+        {"run_id": "r2", "goal": "", "run_status": "running",
+         "updated_at": "2026-01-01T00:00:06+00:00", "has_report": False},
+    ]}
+    VIEW = {
+        "run_id": "r1", "goal": "整理比价报告",
+        "archive": {"run_status": "success", "final_status": "success",
+                    "total_cost": 0.02,
+                    "started_at": "2026-01-01T00:00:01+00:00",
+                    "finished_at": "2026-01-01T00:00:05+00:00",
+                    "duration_ms": 4000, "event_count": 4,
+                    "report_available": True, "source": "存档"},
+        "summary": {"tasks_total": 1, "by_status": {"success": 1},
+                    "success": 1, "failed": 0, "cancelled": 0, "skipped": 0,
+                    "interrupted": 0, "success_rate": 1.0},
+        "timeline": [
+            {"ts": "2026-01-01T00:00:01+00:00", "event": "run_started",
+             "task_id": "", "agent_id": "", "detail": "运行开始（1 个任务）"},
+            {"ts": "2026-01-01T00:00:05+00:00", "event": "run_finished",
+             "task_id": "", "agent_id": "",
+             "detail": "运行结束：success（总成本 $0.02，耗时 4000ms）"},
+        ],
+        "tasks": [{"task_id": "t1", "desc": "a", "status": "success",
+                   "deps": [], "side_effects": "none", "agent_id": "bot",
+                   "match_type": "exact", "risk": False, "assign_reason": "",
+                   "success": True, "duration_ms": 100, "cost": 0.01,
+                   "tokens_in": 10, "tokens_out": 5, "retries": 0,
+                   "error_code": "", "output": {}}],
+        "assignments": [],
+        "prunes": [],
+        "governance": {
+            "audit": {"verdict": "ok", "success_rate": 1.0, "issues": []},
+            "cost": {"total_cost": 0.02, "failed_cost": 0.0, "pruned_cost": 0.0},
+            "reflection": None,
+        },
+        "learning": {"rule_count": 1, "rules": [
+            {"rule_id": "FP-boom", "severity": "medium",
+             "category": "failure_pattern", "tier": "objective",
+             "message": "错误码 boom 出现 2 次", "action": "换 agent",
+             "evidence": {}},
+        ]},
+        "narrative": None,
+    }
+
+    def test_runs_lists(self, capsys):
+        captured = {}
+
+        def _fake(method, url, payload=None, timeout=15):
+            captured["url"] = url
+            return self.RUNS
+
+        with mock.patch("orchestration.cli._request", side_effect=_fake):
+            rc = cli.main(["runs", "--limit", "5"])
+        assert rc == 0
+        assert captured["url"].endswith("/api/runs?limit=5")
+        out = capsys.readouterr().out
+        assert "运行记录：2 条" in out
+        assert "r1" in out and "已归档" in out and "运行中" in out
+        assert "ao view" in out
+
+    def test_runs_empty(self, capsys):
+        rc = run_cli(["runs"], {"/api/runs?limit=50": {"runs": []}}, capsys)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "0 条" in out and "暂无" in out
+
+    def test_view_prints_process(self, capsys):
+        rc = run_cli(["view", "r1"], {"/api/runs/r1/view": self.VIEW}, capsys)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "run r1  success" in out
+        assert "过程时间线：" in out and "运行结束" in out
+        assert "审计：ok" in out
+        assert "学习：1 条规则" in out and "FP-boom" in out
+        assert "/runs/r1" in out  # 指引 Web 页面
+
+    def test_narrate_prints(self, capsys):
+        resp = {"run_id": "r1", "source": "llm", "deterministic": False,
+                "text": "本次运行成功交付比价报告。", "model": "m",
+                "created_at": "2026-01-01T00:00:09+00:00"}
+        rc = run_cli(["narrate", "r1"],
+                     {"/api/runs/r1/narrative": resp}, capsys)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "叙述摘要" in out and "非确定" in out
+        assert "本次运行成功交付比价报告。" in out
