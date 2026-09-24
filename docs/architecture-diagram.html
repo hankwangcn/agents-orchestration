@@ -9,14 +9,14 @@
     --ink:#0f172a; --ink2:#334155; --ink3:#64748b; --ink4:#94a3b8;
     --line:#e2e8f0; --bg:#f1f5f9; --card:#ffffff;
     --blue:#0284c7; --violet:#6d28d9; --teal:#0f766e; --amber:#b45309;
-    --pink:#be185d; --lime:#4d7c0f; --red:#dc2626;
+    --pink:#be185d; --lime:#4d7c0f; --slate:#475569; --red:#dc2626;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
   body{
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
     background:var(--bg); color:var(--ink); padding:28px 20px 40px;
   }
-  .wrap{max-width:1180px; margin:0 auto;}
+  .wrap{max-width:1200px; margin:0 auto;}
 
   /* ---------- 头部 ---------- */
   header{
@@ -25,6 +25,7 @@
     display:flex; justify-content:space-between; align-items:center; gap:24px; flex-wrap:wrap;
     box-shadow:0 10px 30px rgba(15,23,42,.18);
   }
+  .title-row{display:flex; align-items:center; gap:16px;}
   .logo{
     width:56px; height:56px; border-radius:14px; flex:0 0 auto;
     background:linear-gradient(135deg,#0ea5e9,#6366f1);
@@ -32,9 +33,8 @@
     font-weight:800; font-size:20px; letter-spacing:.5px; color:#fff;
     box-shadow:0 6px 16px rgba(14,165,233,.35);
   }
-  .title-row{display:flex; align-items:center; gap:16px;}
   h1{font-size:22px; font-weight:700; letter-spacing:.3px;}
-  header p{color:#cbd5e1; font-size:12.5px; margin-top:4px;}
+  header p{color:#cbd5e1; font-size:12.5px; margin-top:5px; line-height:1.6;}
   .legend{display:flex; flex-direction:column; gap:6px; font-size:11.5px; color:#e2e8f0;}
   .legend .row{display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
   .lg{display:inline-flex; align-items:center; gap:6px; white-space:nowrap;}
@@ -66,41 +66,61 @@
     background:var(--card); border:1px solid var(--line); border-left:5px solid var(--lc);
     border-radius:14px; padding:16px 18px 18px; box-shadow:0 1px 3px rgba(15,23,42,.05);
   }
-  .layer-head{display:flex; align-items:baseline; gap:10px; margin-bottom:12px;}
-  .layer-badge{
-    font-size:14.5px; font-weight:700; color:var(--lc); letter-spacing:1px;
-  }
+  .layer-head{display:flex; align-items:baseline; gap:10px; margin-bottom:6px;}
+  .layer-badge{font-size:15px; font-weight:700; color:var(--lc); letter-spacing:1px;}
   .layer-en{font-size:10.5px; font-weight:600; color:var(--ink4); letter-spacing:2.5px;}
-  .layer-desc{font-size:11.5px; color:var(--ink3); margin-left:auto;}
+  .layer-role{
+    font-size:11px; font-weight:600; color:var(--lc); border:1px solid currentColor;
+    border-radius:999px; padding:1px 9px; margin-left:auto; opacity:.85;
+  }
+  .layer-oneline{
+    font-size:12.5px; font-weight:600; color:var(--ink2); line-height:1.55;
+    margin:0 0 13px; padding-left:11px; border-left:3px solid var(--lc);
+  }
 
   .layer-body{display:flex; flex-wrap:wrap; gap:14px;}
 
   /* ---------- 组件卡片 ---------- */
   .card{
-    flex:1 1 0; min-width:250px; background:#fbfdff;
-    border:1px solid var(--line); border-radius:12px; padding:14px 16px;
-    display:flex; gap:13px; align-items:flex-start;
+    flex:1 1 0; min-width:268px; background:#fbfdff;
+    border:1px solid var(--line); border-radius:12px; padding:14px 16px 15px;
     transition:box-shadow .15s ease, transform .15s ease;
   }
   .card:hover{box-shadow:0 6px 16px rgba(15,23,42,.10); transform:translateY(-1px);}
-  .badge{
-    flex:0 0 auto; width:46px; height:46px; border-radius:11px;
-    background:var(--cc); color:#fff; font-size:13px; font-weight:700;
-    display:flex; align-items:center; justify-content:center; letter-spacing:.5px;
-    box-shadow:0 4px 10px rgba(15,23,42,.15);
+  .card-title{
+    font-size:14.5px; font-weight:700; color:var(--ink);
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
   }
-  .card-main{min-width:0;}
-  .card-title{font-size:14.5px; font-weight:700; color:var(--ink); display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
-  .path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:10.5px; color:var(--ink4); font-weight:400;}
-  .card-desc{font-size:12px; color:var(--ink2); line-height:1.55; margin-top:4px;}
-  .chips{display:flex; flex-wrap:wrap; gap:5px; margin-top:8px;}
-  .chips span{
-    font-size:10.5px; color:var(--ink2); background:#eef2f7; border:1px solid var(--line);
-    border-radius:999px; padding:2px 8px; line-height:1.4;
+  .card-title .mk{
+    display:inline-block; width:9px; height:9px; border-radius:2px; background:var(--cc); flex:0 0 auto;
   }
+  .card-fn{
+    font-size:12.5px; font-weight:600; color:var(--ink); line-height:1.55;
+    margin-top:7px; padding:6px 10px; border-radius:0 7px 7px 0;
+    border-left:3px solid var(--cc); background:#f1f6fb;
+  }
+  .card-fn .tag{
+    display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:1px;
+    color:#fff; background:var(--cc); border-radius:3px; padding:1px 5px;
+    margin-right:7px; vertical-align:1px;
+  }
+  .card-desc{font-size:12px; color:var(--ink2); line-height:1.62; margin-top:8px;}
+  .card-desc .tag{
+    display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:1px;
+    color:var(--lc); margin-right:6px;
+  }
+  .path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:10.5px; color:var(--ink3); font-weight:400;}
+
+  /* ---------- 底座层（跨层基础） ---------- */
+  .base{
+    background:#fbfcfe; border:1px solid var(--line); border-top:5px solid var(--slate);
+    border-radius:14px; padding:16px 18px 18px; box-shadow:0 1px 3px rgba(15,23,42,.05);
+  }
+  .base .layer-badge{color:var(--slate);}
+  .base .card{background:#fff;}
 
   /* ---------- 层间数据流 ---------- */
-  .flow{display:flex; align-items:center; gap:14px; padding:8px 0 10px; height:66px;}
+  .flow{display:flex; align-items:center; gap:14px; padding:8px 0 10px; min-height:58px;}
   .flow-rail{flex:0 0 auto; width:26px; align-self:stretch; position:relative;}
   .flow-rail svg{position:absolute; inset:0; width:100%; height:100%;}
   .fl{stroke:var(--ink3); stroke-width:2; fill:none;}
@@ -110,7 +130,7 @@
   .ft-side{margin-left:auto; font-size:10.5px; color:var(--red); display:flex; align-items:center; gap:6px;}
   .ft-side svg{width:18px; height:10px; flex:0 0 auto;}
 
-  footer{margin-top:26px; text-align:center; font-size:11px; color:var(--ink4);}
+  footer{margin-top:26px; text-align:center; font-size:11px; color:var(--ink4); line-height:1.7;}
   footer b{color:var(--ink3); font-weight:600;}
 </style>
 </head>
@@ -133,6 +153,7 @@
       <span class="lg"><i class="dot" style="background:#b45309"></i>执行层</span>
       <span class="lg"><i class="dot" style="background:#be185d"></i>治理层</span>
       <span class="lg"><i class="dot" style="background:#4d7c0f"></i>学习层</span>
+      <span class="lg"><i class="dot" style="background:#475569"></i>持久化底座</span>
     </div>
     <div class="row">
       <span class="lg">
@@ -157,163 +178,175 @@
     <!-- ================= 接入层 ================= -->
     <section class="layer" style="--lc:#0284c7">
       <div class="layer-head">
-        <span class="layer-badge" style="--lc:#0284c7">接入层</span>
+        <span class="layer-badge">接入层</span>
         <span class="layer-en">ACCESS</span>
-        <span class="layer-desc">框架对外的全部入口——提交目标、查询进度、获取报告、查看完整执行过程</span>
+        <span class="layer-role">系统边界</span>
       </div>
+      <div class="layer-oneline">框架对外的全部入口，覆盖目标提交、进度查询、报告获取与执行过程查阅。</div>
       <div class="layer-body">
-        <div class="card">
-          <div class="badge" style="--cc:#0284c7">API</div>
-          <div class="card-main">
-            <div class="card-title">API 网关</div>
-            <div class="card-desc">FastAPI REST，内置运行生命周期管理：目标拆解 <span class="path">/api/decompose</span>、任务图提交、进度快照、收尾报告、运行枚举 <span class="path">/api/runs</span>、人读投影 <span class="path">/api/runs/{id}/view</span>、运行指标、运行取消、断点恢复、人工确认、agent 档案、跨运行经验库。框架以系统形态对外的 HTTP 入口；agent 侧通信不暴露到 HTTP。</div>
-          </div>
+
+        <div class="card" style="--cc:#0284c7; --lc:#0284c7">
+          <div class="card-title"><span class="mk"></span>API 网关</div>
+          <div class="card-fn"><span class="tag">核心功能</span>框架唯一的 HTTP 服务入口，承载运行全生命周期的对外接口与后台任务管理。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>REST 服务，承载目标拆解 <span class="path">POST /api/decompose</span>、任务图提交 <span class="path">POST /api/runs</span>、运行枚举 <span class="path">GET /api/runs</span>、进度快照、收尾报告 <span class="path">GET /api/runs/{id}/report</span>、人读投影 <span class="path">GET /api/runs/{id}/view</span>、叙述摘要 <span class="path">POST /api/runs/{id}/narrative</span>、运行指标、运行取消、断点恢复、人工确认、agent 档案 <span class="path">GET /api/agents</span> 与跨运行经验库 <span class="path">GET /api/lessons</span>；并负责任务的后台执行与生命周期管理。agent 侧通信不经此暴露。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#0284c7">Web</div>
-          <div class="card-main">
-            <div class="card-title">Web 页面 / 人读投影</div>
-            <div class="card-desc">服务端渲染的运行列表 <span class="path">/</span> 与详情 <span class="path">/runs/{id}</span>（同源、零构建、零跨域）：呈现完整执行过程——过程时间线、任务与结果、分配记录、失败传播、治理结论、学习规则。人读版是运行存档的读时投影（按需渲染、确定性、可复跑），不落盘为第二份真相；叙述摘要（大模型产出）显式触发、单独留档。</div>
-          </div>
+
+        <div class="card" style="--cc:#0284c7; --lc:#0284c7">
+          <div class="card-title"><span class="mk"></span>Web 页面</div>
+          <div class="card-fn"><span class="tag">核心功能</span>运行存档的人读界面，完整呈现一次运行的执行过程。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>服务端渲染，同源、零构建、零跨域；含运行列表 <span class="path">GET /</span> 与运行详情 <span class="path">GET /runs/{id}</span>，详情呈现过程时间线、任务与结果、分配记录、失败传播、治理结论与学习规则。人读版是运行存档的读时投影——按需渲染、纯函数（同一份存档渲染同一份视图，可复跑、零成本），不落盘为第二份真相。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#0284c7">PY</div>
-          <div class="card-main">
-            <div class="card-title">编程式接口</div>
-            <div class="card-desc">库内嵌调用：同步入口（单次运行）与异步入口（并发运行，运行间状态隔离）。</div>
-          </div>
+
+        <div class="card" style="--cc:#0284c7; --lc:#0284c7">
+          <div class="card-title"><span class="mk"></span>命令行客户端</div>
+          <div class="card-fn"><span class="tag">核心功能</span>接入能力的命令行形态，把框架全部操作暴露到终端与交互式会话。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>仅依赖标准库的轻量客户端。子命令覆盖拆解、提交、报告、指标、取消、恢复、人工确认、agent 档案、经验库、运行枚举、运行视图、叙述摘要与服务启动；无子命令时进入交互式会话。</div>
         </div>
+
+        <div class="card" style="--cc:#0284c7; --lc:#0284c7">
+          <div class="card-title"><span class="mk"></span>编程式接口</div>
+          <div class="card-fn"><span class="tag">核心功能</span>以库内嵌方式直接驱动编排，供上层程序集成。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>提供同步入口（单次运行）与异步入口（并发运行，运行间状态隔离）；以任务图为输入、以调度报告为输出。</div>
+        </div>
+
       </div>
     </section>
 
     <div class="flow">
       <div class="flow-rail">
-        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
-          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
-          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        <svg viewBox="0 0 26 58" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="48" class="fl"/>
+          <path d="M6.5 47 L13 56 L19.5 47" class="fl"/>
         </svg>
       </div>
       <div class="flow-tag">
         <span class="ft-main">提交目标</span>
-        <span class="ft-sub">目标文本 → 拆解引擎；或直接提交任务图 JSON（API 网关）</span>
+        <span class="ft-sub">目标文本 → 拆解引擎；或直接提交现成任务图</span>
       </div>
     </div>
 
     <!-- ================= 规划层 ================= -->
     <section class="layer" style="--lc:#6d28d9">
       <div class="layer-head">
-        <span class="layer-badge" style="--lc:#6d28d9">规划层</span>
+        <span class="layer-badge">规划层</span>
         <span class="layer-en">PLAN</span>
-        <span class="layer-desc">将目标拆解为可执行、可并行、可审计的子任务</span>
+        <span class="layer-role">目标 → 任务图</span>
       </div>
+      <div class="layer-oneline">将自然语言目标拆解为可执行、可并行、可审计的任务图，并给出任务图的结构视图与可用资源画像。</div>
       <div class="layer-body">
-        <div class="card">
-          <div class="badge" style="--cc:#6d28d9">拆解</div>
-          <div class="card-main">
-            <div class="card-title">任务拆解引擎</div>
-            <div class="card-desc">由大模型将目标拆解为子任务与数据流依赖，产出任务图，并执行拆解 Schema 校验。每个子任务声明 <span class="path">model / budget / timeout</span> 与能力标签 <span class="path">required_capabilities</span>，作为分配依据。接入：网关 <span class="path">POST /api/decompose</span>、CLI <span class="path">ao decompose --submit</span>；重试携带失败原因与正确示例。属框架内部大模型调用，不经消息协议。</div>
-            <div class="chips"><span>输出：依赖图</span><span>能力需求声明</span><span>Schema 校验</span><span>目标 → 任务图 接入</span></div>
-          </div>
+
+        <div class="card" style="--cc:#6d28d9; --lc:#6d28d9">
+          <div class="card-title"><span class="mk"></span>任务拆解引擎</div>
+          <div class="card-fn"><span class="tag">核心功能</span>把自然语言目标转成带数据流依赖的子任务图。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>由大模型完成拆解，产出任务图并执行拆解 Schema 校验与修正重试（重试携带失败原因与正确示例）。每个子任务声明 <span class="path">model / budget / timeout</span> 与能力标签 <span class="path">required_capabilities</span>，作为后续分配依据。提示词结构为“固定指令 → 学习层指导块 → 用户目标”。属框架内部大模型调用，不经消息协议。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#6d28d9">依赖</div>
-          <div class="card-main">
-            <div class="card-title">依赖分析</div>
-            <div class="card-desc">任务图的结构视图：数据流依赖，<b>纯结构、不持有运行时状态</b>（状态归调度层）。提供引用合法性、成环检测、拓扑序、<b>拓扑分层（并行前沿）</b>、最大并行宽度、可达性与反向可达（剪枝判据）、交付点判定；承担拆解产物的合法性校验。网关 <span class="path">POST /api/decompose</span> 直接返回结构分析（分层与并行宽度）。</div>
-            <div class="chips"><span>结构视图</span><span>拓扑分层 = 并行前沿</span><span>反向可达（剪枝判据）</span><span>无环 / 引用 / 交付点校验</span></div>
-          </div>
+
+        <div class="card" style="--cc:#6d28d9; --lc:#6d28d9">
+          <div class="card-title"><span class="mk"></span>依赖分析</div>
+          <div class="card-fn"><span class="tag">核心功能</span>任务图的结构视图，纯结构计算、不持有运行时状态。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>覆盖引用合法性、无环检测、拓扑序（并列节点按插入序，保证确定性）、拓扑分层（并行前沿）、最大并行宽度、可达性与反向可达（剪枝判据）与交付点判定；并承担拆解产物的合法性校验。运行时状态归调度层，本模块只读任务图结构。</div>
         </div>
+
+        <div class="card" style="--cc:#6d28d9; --lc:#6d28d9">
+          <div class="card-title"><span class="mk"></span>资源统计器</div>
+          <div class="card-fn"><span class="tag">核心功能</span>经信息请求采集 agent 的能力、资源与约束声明，形成并维护资源画像。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>注册 agent 实例，采集能力、资源与约束声明并解析入库，单点采集失败相互隔离。刷新采用池级惰性刷新（画像超过生存期即重新采集，新鲜时零开销）与派发前决策点校验（复核易变的资源与约束维度）；采集受框架侧墙钟上限约束。</div>
+        </div>
+
       </div>
     </section>
 
     <div class="flow">
       <div class="flow-rail">
-        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
-          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
-          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        <svg viewBox="0 0 26 58" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="48" class="fl"/>
+          <path d="M6.5 47 L13 56 L19.5 47" class="fl"/>
         </svg>
       </div>
       <div class="flow-tag">
         <span class="ft-main">任务图 + 能力需求</span>
-        <span class="ft-sub">注册表经信息请求采集 agent 能力与资源声明（可刷新）→ 三级分配</span>
+        <span class="ft-sub">资源画像驱动三级分配</span>
       </div>
     </div>
 
     <!-- ================= 调度层 ================= -->
     <section class="layer" style="--lc:#0f766e">
       <div class="layer-head">
-        <span class="layer-badge" style="--lc:#0f766e">调度层</span>
+        <span class="layer-badge">调度层</span>
         <span class="layer-en">SCHEDULE</span>
-        <span class="layer-desc">资源协调、并发派发、失败传播与失效任务剪除</span>
+        <span class="layer-role">分配 · 派发 · 收敛</span>
       </div>
+      <div class="layer-oneline">资源协调、并发派发、失败传播与失效任务剪除。</div>
       <div class="layer-body">
-        <div class="card">
-          <div class="badge" style="--cc:#0f766e">资源</div>
-          <div class="card-main">
-            <div class="card-title">Agent 注册表</div>
-            <div class="card-desc">按层切分：规划层资源统计器（注册、信息请求采集、声明解析、惰性刷新）与调度层资源协调器（三级分配、连续失败摘除），注册表收敛为零逻辑转发的组合门面。能力由信息请求采集而非配置：capability / resource / constraint 声明入库（单点失败隔离）。刷新策略为池级惰性刷新与派发前决策点校验（复核易变维度）。三级分配全程记录：精确匹配（同模型多实例轮询）→ 能力匹配（部分覆盖标记 risk）→ 降级（通用模型）。连续失败达阈值自动摘除。</div>
-            <div class="chips"><span>精确匹配</span><span>能力匹配</span><span>降级记录</span><span>失败摘除</span></div>
-          </div>
+
+        <div class="card" style="--cc:#0f766e; --lc:#0f766e">
+          <div class="card-title"><span class="mk"></span>资源协调器</div>
+          <div class="card-fn"><span class="tag">核心功能</span>为每个任务选定 agent 实例。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>三级分配策略——精确匹配（同模型多实例轮询分流）→ 能力匹配（部分覆盖标记风险）→ 降级（显式记录）；连续失败达阈值后自动摘除该实例。只读取资源画像，不执行采集。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#0f766e">调度</div>
-          <div class="card-main">
-            <div class="card-title">调度器（同步 / 异步）</div>
-            <div class="card-desc">按拓扑序派发；异步实现以 asyncio 并发推进（任一完成即处理），资源限制由声明转为强制执行：按 agent 的并发上限（信号量）与速率配额（滑动窗口）。单次尝试超过 <span class="path">timeout</span> 由框架强制中断（agent 无响应不再占用并发名额）。失败重试 N=2 并指数退避，耗尽后传播失败、反向可达剪枝、下发取消（best-effort）。竞态处理：冻结派发 → 逐级取消 → 统一收尾，迟到结果丢弃。</div>
-            <div class="chips"><span>重试 N=2 指数退避</span><span>框架侧超时封顶</span><span>反向可达剪枝</span><span>取消 best-effort</span><span>竞态：冻结 → 取消 → 收尾</span></div>
-          </div>
+
+        <div class="card" style="--cc:#0f766e; --lc:#0f766e">
+          <div class="card-title"><span class="mk"></span>DAG 调度器（同步 / 异步）</div>
+          <div class="card-fn"><span class="tag">核心功能</span>按拓扑序派发任务并将运行推进到终态。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>按拓扑序派发、传递上游结果。异步实现以 asyncio 并发推进（任一任务完成即处理），资源限制由声明转为强制执行：按 agent 的并发上限（信号量）与速率配额（滑动窗口）。单次尝试超过 <span class="path">timeout</span> 由框架强制中断，避免无响应 agent 长期占用并发名额。失败重试 N=2 并指数退避。竞态按“冻结派发 → 取消 → 统一收尾”处理，迟到结果直接丢弃。</div>
         </div>
+
+        <div class="card" style="--cc:#0f766e; --lc:#0f766e">
+          <div class="card-title"><span class="mk"></span>失败处理器</div>
+          <div class="card-fn"><span class="tag">核心功能</span>重试 → 失败传播 → 失效任务剪除 → 统一收尾反馈。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>该能力跨三层协作，不构成独立模块——剪枝算法属图结构计算，取消下发与派发冻结属调度控制流。剪枝判据为“任务的产出是否仍被最终交付消费”（反向可达）：存活交付点为空则整棵任务图取消。取消为 best-effort，不阻塞收尾。</div>
+        </div>
+
       </div>
     </section>
 
     <div class="flow">
       <div class="flow-rail">
-        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
-          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
-          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        <svg viewBox="0 0 26 58" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="48" class="fl"/>
+          <path d="M6.5 47 L13 56 L19.5 47" class="fl"/>
         </svg>
       </div>
       <div class="flow-tag">
         <span class="ft-main">派发 task_request / info_request</span>
-        <span class="ft-sub">框架永远主动；协议模板与请求 JSON、上游数据拼接（=== REQUEST === / === INPUT === 分段）</span>
+        <span class="ft-sub">协议模板 + 请求 JSON + 上游输入拼接；框架永远主动</span>
       </div>
       <div class="ft-side">
         <svg viewBox="0 0 18 10"><path d="M0 5 H11 M9 2 L13 5 L9 8" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="3 2" fill="none"/></svg>
-        cancel 变体（best-effort）
+        取消变体（best-effort）
       </div>
     </div>
 
     <!-- ================= 执行层 ================= -->
     <section class="layer" style="--lc:#b45309">
       <div class="layer-head">
-        <span class="layer-badge" style="--lc:#b45309">执行层</span>
+        <span class="layer-badge">执行层</span>
         <span class="layer-en">EXECUTE</span>
-        <span class="layer-desc">协议装配与解析——稳定性风险在此吸收，agent 侧零适配</span>
+        <span class="layer-role">协议装配 · 解析</span>
       </div>
+      <div class="layer-oneline">协议装配与解析——稳定性风险在此吸收，agent 侧零适配。</div>
       <div class="layer-body">
-        <div class="card">
-          <div class="badge" style="--cc:#b45309">适配</div>
-          <div class="card-main">
-            <div class="card-title">Agent 适配器</div>
-            <div class="card-desc">适配器基类：协议模板装配（完整版 / 简化版，内嵌样本示例）、两级校验解析（提取 → 信封与输出结构校验 → 失败自动重试一次，与任务重试分离计数）。DeepSeek 适配器经异步客户端实现真异步；同步实现经线程池零改动兼容。从模型 API 响应回填真实用量与耗时。</div>
-            <div class="chips"><span>模板分档（完整 / 简化）</span><span>request_id 强制回带</span><span>解析重试 + 修正提示</span></div>
-          </div>
+
+        <div class="card" style="--cc:#b45309; --lc:#b45309">
+          <div class="card-title"><span class="mk"></span>Agent 适配器</div>
+          <div class="card-fn"><span class="tag">核心功能</span>装配协议提示词、调用模型并解析结果契约，是框架与 agent 之间的唯一执行入口。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>完成协议模板装配（完整版 / 简化版，模板内嵌正反示例）；两级校验解析（提取 → 信封与输出结构校验 → 失败自动修正重试一次，与任务重试分离计数）。提供同步与异步两条调用路径，异步默认将同步实现置于线程池，HTTP 形态实现真异步。从模型 API 响应回填真实用量与耗时。解析组件为框架内最严格的模块。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#b45309">Agent</div>
-          <div class="card-main">
-            <div class="card-title">Agent（外部）· DeepSeek / Claude / 自建</div>
-            <div class="card-desc">只接收请求、返回符合结果契约的 JSON，不为编排系统做任何适配。框架唯一硬约束是 agent 能输出合法 JSON；格式漂移、语义漂移与注入等稳定性风险全部由框架解析组件吸收。</div>
-          </div>
+
+        <div class="card" style="--cc:#b45309; --lc:#b45309">
+          <div class="card-title"><span class="mk"></span>Agent（外部）</div>
+          <div class="card-fn"><span class="tag">核心功能</span>接收请求、返回符合结果契约的 JSON，不为框架做任何适配。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>唯一硬约束是输出合法 JSON；格式漂移、语义漂移与提示注入等稳定性风险全部由框架侧解析组件吸收，agent 保持零适配。</div>
         </div>
+
       </div>
     </section>
 
     <div class="flow">
       <div class="flow-rail">
-        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
-          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
-          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        <svg viewBox="0 0 26 58" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="48" class="fl"/>
+          <path d="M6.5 47 L13 56 L19.5 47" class="fl"/>
         </svg>
       </div>
       <div class="flow-tag">
@@ -325,83 +358,110 @@
     <!-- ================= 治理层 ================= -->
     <section class="layer" style="--lc:#be185d">
       <div class="layer-head">
-        <span class="layer-badge" style="--lc:#be185d">治理层</span>
+        <span class="layer-badge">治理层</span>
         <span class="layer-en">GOVERN</span>
-        <span class="layer-desc">结果审计（确定性对账）、反思 / 判定（语义达成度，advisory）、成本核算与可观测性</span>
+        <span class="layer-role">审计 · 判定 · 核算</span>
       </div>
+      <div class="layer-oneline">确定性审计、运行级语义判定（advisory）、成本核算与可观测性。</div>
       <div class="layer-body">
-        <div class="card">
-          <div class="badge" style="--cc:#be185d">审计</div>
-          <div class="card-main">
-            <div class="card-title">结果审计器</div>
-            <div class="card-desc">正确性对账（状态与结果契约矛盾、缺失契约、迟到结果）、分配审计（降级与风险）、剪枝审计、语义交叉校验（能力声明、副作用声明与实际结果）。结论分三级：ok / warning / critical。<b>只读、可复跑、确定性</b>——审计对象是状态机自洽性；产出内容的正确性由反思 / 判定处理（两者分离记录）。</div>
-          </div>
+
+        <div class="card" style="--cc:#be185d; --lc:#be185d">
+          <div class="card-title"><span class="mk"></span>结果审计器</div>
+          <div class="card-fn"><span class="tag">核心功能</span>对结果契约与调度事实执行确定性对账。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>覆盖正确性对账（状态与结果契约矛盾、缺失契约、迟到结果）、分配审计（降级与风险）、剪枝审计、语义交叉校验（能力声明、副作用声明与实际结果）与错误模式归集；结论分三级 ok / warning / critical。只读、可复跑、确定性——审计对象是状态机的自洽性，产出内容的正确性交给反思 / 判定处理，两者分离记录。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#be185d">判定</div>
-          <div class="card-main">
-            <div class="card-title">反思 / 判定</div>
-            <div class="card-desc">运行级语义判定：以最终交付与原始目标比对，产出达成结论、评分与缺口。基准<b>只能是 goal</b>（子任务描述为框架自产的拆解产物，用作基准即循环论证），子任务结果仅作证据。判定者优先取注册表中声明 <span class="path">judge</span> 能力的独立 agent（能力经信息请求采集，可为异构模型），无则降级自判并标记 <span class="path">independent=false</span>。判定即一次普通 <span class="path">task_request</span>（消息类型零新增、agent 零变更），受输出结构强校验与解析重试约束。<b>advisory</b>：只写报告并供学习层消费，不改变状态、不阻断交付、不自动重派；与确定性审计分离记录，成本单列。</div>
-          </div>
+
+        <div class="card" style="--cc:#be185d; --lc:#be185d">
+          <div class="card-title"><span class="mk"></span>反思 / 判定器</div>
+          <div class="card-fn"><span class="tag">核心功能</span>以原始目标为唯一基准，判定最终交付是否达成目标（advisory）。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>基准只能是运行级目标 <span class="path">goal</span>（子任务描述是框架自产的拆解产物，用作基准即循环论证），子任务结果仅作证据（含失败与剪枝事实）。判定者优先取注册表中声明 <span class="path">judge</span> 能力的独立 agent（能力经信息请求采集，可为异构模型），无则降级自判并标记 <span class="path">independent=false</span>。判定即一次普通 <span class="path">task_request</span>（消息类型零新增），受输出结构强校验与解析重试约束，调用受墙钟超时约束，超时或异常一律收敛为错误码。advisory：只写报告并供学习层消费，不改变状态、不阻断交付、不自动重派；与审计分离记录，成本单列，判定产物不再被判定。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#be185d">成本</div>
-          <div class="card-main">
-            <div class="card-title">成本核算</div>
-            <div class="card-desc">按 agent 与分配方式归集成本与 token（降级成本单独呈现）；失败重试的沉没成本与剪枝已发生成本单独列账；对 agent 的预算声明执行超支判定。</div>
-          </div>
+
+        <div class="card" style="--cc:#be185d; --lc:#be185d">
+          <div class="card-title"><span class="mk"></span>成本核算</div>
+          <div class="card-fn"><span class="tag">核心功能</span>按 agent 与分配方式归集成本与 token。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>降级成本单独呈现；失败重试的沉没成本与剪枝已发生成本单独列账；针对 agent 声明的预算上限执行超支判定（预算声明为 0 时不判定）。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#be185d">观测</div>
-          <div class="card-main">
-            <div class="card-title">可观测性</div>
-            <div class="card-desc">按运行隔离的指标聚合（成功率、耗时、峰值并发、降级数）与结构化日志（key=value）。指标直接供审计与学习消费，日志覆盖请求、响应、解析与取消全链路。</div>
-          </div>
+
+        <div class="card" style="--cc:#be185d; --lc:#be185d">
+          <div class="card-title"><span class="mk"></span>可观测性</div>
+          <div class="card-fn"><span class="tag">核心功能</span>按运行隔离的指标聚合与结构化日志。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>指标含成功率、耗时、峰值并发与降级数，直接供审计与学习消费；日志覆盖请求、响应、解析与取消全链路。</div>
         </div>
+
       </div>
     </section>
 
     <div class="flow">
       <div class="flow-rail">
-        <svg viewBox="0 0 26 66" preserveAspectRatio="none">
-          <line x1="13" y1="0" x2="13" y2="56" class="fl"/>
-          <path d="M6.5 55 L13 64 L19.5 55" class="fl"/>
+        <svg viewBox="0 0 26 58" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="48" class="fl"/>
+          <path d="M6.5 47 L13 56 L19.5 47" class="fl"/>
         </svg>
       </div>
       <div class="flow-tag">
-        <span class="ft-main">治理产物附载回运行存档（落盘）</span>
-        <span class="ft-sub">确定性对账 · 成本 · 剪枝证据（根失败与剪除清单）· 目标达成度（advisory）；治理层与学习层分别对同一份存档写与读</span>
+        <span class="ft-main">治理产物附载回运行存档</span>
+        <span class="ft-sub">审计对账 · 成本 · 剪枝证据 · 目标达成度（advisory）</span>
       </div>
     </div>
 
     <!-- ================= 学习层 ================= -->
     <section class="layer" style="--lc:#4d7c0f">
       <div class="layer-head">
-        <span class="layer-badge" style="--lc:#4d7c0f">学习层</span>
+        <span class="layer-badge">学习层</span>
         <span class="layer-en">LEARN</span>
-        <span class="layer-desc">确定性复盘 → 证据分级 → 跨运行经验库 → 回馈拆解提示词</span>
+        <span class="layer-role">复盘 · 沉淀 · 回馈</span>
       </div>
+      <div class="layer-oneline">确定性复盘 → 证据分级 → 跨运行经验库 → 回馈拆解提示词。</div>
       <div class="layer-body">
-        <div class="card">
-          <div class="badge" style="--cc:#4d7c0f">学习</div>
-          <div class="card-main">
-            <div class="card-title">复盘与规则提取</div>
-            <div class="card-desc">运行收尾时对同一份报告执行<b>只读复盘</b>（审计事实、成本事实、判定结论），产出结论与动作建议：REC（解析组件排查）、FP（错误码频发，建议更换 agent）、DEG（降级占比高，核对拆解建议）、CAP（风险分配失败率高，重新采集能力）、BUG（超预算）、PRU（剪枝，复盘拆解并行度）、INT（断点中断待人工）、JUD（目标未达成或判定链路故障）。规则带<b>证据强度分级</b>：<span class="path">objective</span>（确定性事实，只读可复跑）与 <span class="path">judgment</span>（大模型判定，非确定有成本）<b>禁止同级呈现</b>。学习层是复盘而非主链路，异常一律隔离，不阻断运行收尾。</div>
-          </div>
+
+        <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">
+          <div class="card-title"><span class="mk"></span>复盘与规则提取</div>
+          <div class="card-fn"><span class="tag">核心功能</span>运行收尾时对同一份报告执行只读复盘，产出分级的规则结论与动作建议。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>规则覆盖 REC-1（缺契约 / 状态矛盾，指向框架自身断链）、FP（同错误码频发，建议更换 agent）、DEG-1（降级占比高，核对拆解建议）、CAP-1（风险分配失败率高，重新采集能力）、BUG（实花超预算）、PRU-1（剪枝，复盘并行度）、INT-1（崩溃中断待人工）与 JUD-1 / JUD-2（目标未达成 / 判定未产出结论）。规则带证据强度分级：<span class="path">objective</span>（确定性事实，只读可复跑）与 <span class="path">judgment</span>（大模型判定，非确定有成本），禁止同级呈现。复盘为只读动作，异常一律隔离，不阻断运行收尾。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#4d7c0f">规则</div>
-          <div class="card-main">
-            <div class="card-title">经验库</div>
-            <div class="card-desc"><b>跨运行记忆</b>：规则落盘 SQLite（经验库表，同一运行重跑幂等），按规则标识聚合<b>命中次数、贡献运行数、最高严重度与最近证据</b>——单次运行内的阈值统计意义有限，<b>跨运行复现才是客观依据</b>。出口：<span class="path">GET /api/lessons</span> 与 <span class="path">ao lessons</span>。</div>
-          </div>
+
+        <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">
+          <div class="card-title"><span class="mk"></span>经验库</div>
+          <div class="card-fn"><span class="tag">核心功能</span>将规则落盘并聚合为跨运行摘要，作为后续任务的数据基础。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>规则落盘为经验库表（同一运行重跑幂等），按规则标识聚合命中次数、贡献运行数、最高严重度与最近证据——单次运行内的阈值统计意义有限，跨运行复现才是客观依据。出口为 <span class="path">GET /api/lessons</span> 与 <span class="path">ao lessons</span>。</div>
         </div>
-        <div class="card">
-          <div class="badge" style="--cc:#4d7c0f">回馈</div>
-          <div class="card-main">
-            <div class="card-title">提示词顾问</div>
-            <div class="card-desc"><b>闭环出口为拆解提示词</b>：注入固定指令与用户目标之间的指导块——① 注册表实测事实（可用模型、已注册能力标签，直接测量无需阈值，可在拆解期规避降级与能力风险）；② <b>达到复现门槛</b>的客观规则（<span class="path">min_occurrences</span> 默认 2，每条附"既往 N 次运行命中 M 次"的数值依据与建议动作）；③ 判定结论<b>单独成节并标注非确定来源</b>。指导块缺失或异常一律退化为不注入，学习层故障不影响拆解。</div>
-          </div>
+
+        <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">
+          <div class="card-title"><span class="mk"></span>提示词顾问</div>
+          <div class="card-fn"><span class="tag">核心功能</span>生成注入拆解提示词的指导块，是学习闭环的出口。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>指导块含三部分——① 注册表实测事实（当前可用模型、已注册能力标签，直接测量无需阈值，可在拆解期即规避降级与能力风险）；② 达复现门槛的客观规则（<span class="path">min_occurrences</span> 默认 2，每条恒附带“既往 N 次运行命中 M 次”的数值依据与建议动作，条数受限、超长截断）；③ 判定结论单独成节并显式标注非确定来源，客观与判定禁止同级呈现。指导块缺失、空串或异常一律退化为不注入，学习层故障不影响拆解。</div>
+        </div>
+
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 26 58" preserveAspectRatio="none">
+          <line x1="13" y1="0" x2="13" y2="48" class="fl"/>
+          <path d="M6.5 47 L13 56 L19.5 47" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">运行存档落盘</span>
+        <span class="ft-sub">过程事件流 + 终态报告（治理与学习产物附载）</span>
+      </div>
+    </div>
+
+    <!-- ================= 持久化底座 ================= -->
+    <section class="base">
+      <div class="layer-head">
+        <span class="layer-badge">持久化底座</span>
+        <span class="layer-en">STORE</span>
+        <span class="layer-role">跨层基础</span>
+      </div>
+      <div class="layer-oneline" style="border-left-color:#475569">保存框架侧的调度状态与运行存档，供崩溃恢复、查阅与复盘。</div>
+      <div class="layer-body">
+        <div class="card" style="--cc:#475569; --lc:#475569">
+          <div class="card-title"><span class="mk"></span>状态存储 / 运行存档</div>
+          <div class="card-fn"><span class="tag">核心功能</span>单次运行的不可变存档，是框架的唯一权威来源。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>由过程事件流（状态变更逐条落盘，可精确回放）与终态报告（治理与学习产物附载）构成，事件驱动写入使崩溃点数据最新、丢失窗口近似于零。支持报告读回与运行枚举，跨进程重启后仍可查询与恢复。断点恢复据此执行 A+B 策略：无副作用任务自动重派，声明副作用的任务置为待人工确认。经验库与叙述摘要为该存储的可选能力，实现未支持时退化为无相应记忆。</div>
         </div>
       </div>
     </section>
@@ -423,7 +483,8 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v2.2 · 2026-09-24 · 四阶段实现完成 + 断点持久化 + 多运行并发加固 + 规划层（拆解接入 / 依赖分析独立 / 注册表分层）+ 调度层（取消下发统一）+ 执行层（输出结构强校验 / 采集超时）+ 治理层（反思判定：运行级目标 + 独立判定者）+ 学习层闭环（复盘分级 → 跨运行经验库 → 回馈拆解提示词）+ 接入层（运行存档：过程事件流 + 报告读回 + 运行枚举；Web 页面 + 人读投影；叙述摘要）（目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习闭环 → 运行存档 → 崩溃恢复）· 468/468 测试通过
+  <b>Agents Orchestration</b> · 架构 v2.3 · 2026-09-24 · 六层功能架构 + 持久化底座 · 468/468 测试通过
+  <br>目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习闭环 → 运行存档 → 崩溃恢复
 </footer>
 
 </div>
