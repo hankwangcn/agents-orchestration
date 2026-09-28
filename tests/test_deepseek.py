@@ -1,7 +1,7 @@
 """DeepSeek 适配器测试（mock API 响应，不真实调用）。
 
-覆盖：真实元数据回填（usage/token/耗时）——冒烟实测发现真实 LLM
-不自报 usage，由 adapter 从 API 响应捕获（协议 §4.2 回退）。
+覆盖：真实元数据回填（usage/token/耗时）——真实 LLM 不自报 usage，
+由 adapter 从 API 响应捕获（协议 §4.2 回退）。
 """
 import json
 from types import SimpleNamespace

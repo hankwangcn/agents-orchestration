@@ -1,13 +1,13 @@
 """Agent 池 + 资源统计（架构 §3.2 **规划层「资源统计器」**；阶段三）。
 
-核心设计（对话共识）：**能力是"问"出来的，不是配出来的**。
+核心设计：**能力经信息请求采集获得，不写入配置**。
 - 只登记 agent 实例的存在（agent_id + model + adapter 引用）
 - 能力 / 资源 / 约束声明通过 info_request 采集（协议 §4.2 scope=
   capability/resource/constraint），解析为结构化声明入库，可刷新
 - 刷新策略 = **TTL 惰性刷新 + 决策点校验**：池级 `ensure_fresh()` 读时过期
   即刷（仅对过期 agent 重采，未过期无开销）；决策点 `validate_before_dispatch()`
   在派发前对选中 agent 复核易变维度（resource/constraint）
-- 采集受**框架侧 wall-clock 上限**约束（`info_timeout_seconds`，与任务执行 #34
+- 采集受**框架侧 wall-clock 上限**约束（`info_timeout_seconds`，与任务执行超时
   对称）：采集无响应不能无上限地阻塞调用方，超时按单点失败处理、保留上次画像
 
 **层职责边界**：本模块只做"把池的画像采集准确并对外提供"（注册 / 采集 / 声明解析
@@ -86,7 +86,7 @@ class RegistryError(Exception):
 
 
 def _split_tags(text: str) -> list[str]:
-    """把逗号/分号/顿号分隔的标签文本切成干净列表。"""
+    """把以逗号 / 分号 / 顿号分隔的标签文本解析为去空白的标签列表。"""
     tags = re.split(r"[,;，；、\n]+", text or "")
     return [t.strip() for t in tags if t.strip()]
 
@@ -143,7 +143,7 @@ class AgentPool:
         self._default_id: Optional[str] = None
         self.collect_ttl_seconds = collect_ttl_seconds
         self.validate_on_dispatch = validate_on_dispatch
-        # 框架侧 wall-clock 上限（与任务执行 #34 对称）：采集同样会无响应，
+        # 框架侧 wall-clock 上限（与任务执行超时对称）：采集同样会无响应，
         # 不能无上限地阻塞调用方（run 起始的池级刷新 / 派发前的决策点校验）。
         # <=0 表示不设超时。
         self.info_timeout_seconds = info_timeout_seconds
@@ -203,7 +203,7 @@ class AgentPool:
         """对单个 agent 发一次 info_request 并解析入库。
 
         采集受框架侧 wall-clock 上限约束（info_timeout_seconds）——与任务执行
-        #34 对称：采集无响应同样不能无上限地阻塞调用方；超时按单点失败处理。
+        与任务执行超时对称：采集无响应同样不能无上限地阻塞调用方；超时按单点失败处理。
         """
         request_id = f"info:{agent.agent_id}:{scope}:{_ts()}"
         timeout = self.info_timeout_seconds

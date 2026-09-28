@@ -571,7 +571,7 @@ class TestFromConfig:
 
 
 # ---------------------------------------------------------------------------
-# 层职责切分（本次详细设计）：规划层 AgentPool × 调度层 Allocator
+# 层职责切分：规划层 AgentPool × 调度层 Allocator
 # ---------------------------------------------------------------------------
 
 class TestLayerSplit:
@@ -669,7 +669,7 @@ class TestLayerSplit:
 
 
 # ---------------------------------------------------------------------------
-# info 采集框架侧超时（执行层详细设计缺口 b；与任务执行 #34 对称）
+# 信息采集的框架侧超时（与任务执行超时对称）
 # ---------------------------------------------------------------------------
 
 class SlowInfoAdapter(InfoAdapter):
@@ -708,7 +708,7 @@ class ToggleInfoAdapter(InfoAdapter):
 
 class TestInfoTimeout:
     def test_sync_collect_bounded(self):
-        """采集无响应 → 到点即返（不再无上限阻塞调用方）。"""
+        """采集无响应 → 到期即返回（不再无上限阻塞调用方）。"""
         reg = AgentRegistry(info_timeout_seconds=0.05)
         reg.register(SlowInfoAdapter(delay=0.5, declarations=DECL), agent_id="slow")
         t0 = time.monotonic()

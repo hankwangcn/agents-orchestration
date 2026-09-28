@@ -20,7 +20,7 @@ from .models import Assignment, Task
 
 
 class Allocator:
-    """资源协调器：为任务挑 agent（三级策略）+ 维护 agent 健康度/摘除。"""
+    """资源协调器：为任务选定 agent（三级策略）+ 维护 agent 健康度与摘除。"""
 
     def __init__(
         self,

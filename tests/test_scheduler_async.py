@@ -3,7 +3,7 @@
 覆盖：并发派发（时间重叠）、并发上限（per-agent semaphore）、速率限制、
 失败剪枝竞态（冻结→逐级取消→收尾→晚到结果丢弃）、独立分支存活、
 外部取消（cancel_event）、多 run 并发状态隔离、metrics 记录、
-资源画像刷新接线、框架侧 wall-clock 超时（#34）。
+资源画像刷新接线、框架侧 wall-clock 超时。
 """
 from __future__ import annotations
 
@@ -425,7 +425,7 @@ class TestMultiRunQuota:
 
         async def scenario():
             adapter = AsyncScriptedAdapter({"a": [ok("a")], "b": [ok("b")]})
-            adapter.script_delay["a"] = 0.4  # a 慢任务：占住 agent_001 并发槽
+            adapter.script_delay["a"] = 0.4  # a 慢任务：占用 agent_001 并发槽
             sched, reg = make_scheduler(adapter)
             reg.get("agent_001").max_concurrency = 1
 
@@ -512,8 +512,8 @@ class TestRefreshWiring:
 
 
 class TestFrameworkTimeout:
-    """#34：框架侧 wall-clock 超时——required_resources.timeout 从"声明给 agent
-    的建议值"变为框架强制执行，agent 无响应不再永久占住并发槽。"""
+    """框架侧 wall-clock 超时——required_resources.timeout 从"声明给 agent 的建议值"
+    变为框架强制执行，agent 无响应不再长期占用并发槽。"""
 
     def test_hanging_task_times_out_and_fails(self):
         dag = DAG(tasks={
@@ -535,7 +535,7 @@ class TestFrameworkTimeout:
         assert not sched._sems["agent_001"].locked()
 
     def test_timeout_releases_slot_for_next_run(self):
-        """超时后同一 agent 仍可派发——无响应调用不再永久占住并发槽。
+        """超时后同一 agent 仍可派发——无响应调用不再长期占用并发槽。
 
         （若槽泄漏，第二次 run 会永久阻塞在 async with sem 上，故设 5s 上限。）
         """
@@ -585,14 +585,14 @@ class TestFrameworkTimeout:
 
 
 # ---------------------------------------------------------------------------
-# 派发内重试与副作用声明（#58 定标 · 方案 B）
+# 派发内重试与副作用声明
 # ---------------------------------------------------------------------------
 
 class TestDispatchRetryIgnoresSideEffects:
-    """#58 定标（方案 B）：派发内重试不区分副作用声明，幂等责任归执行侧。
+    """派发内重试不区分副作用声明，幂等责任归执行侧。
 
-    对照 §5.5 断点恢复路径的 A+B 策略（声明副作用的任务恢复时不自动重派）：
-    两条路径处理方式不同——恢复路径拦截，派发内重试不拦截，由协议模板声明
+    对照 §5.5 崩溃恢复路径的恢复策略（声明副作用的任务恢复时不自动重派）：
+    两条路径处理方式不同——崩溃恢复拦截，派发内重试不拦截，由协议模板声明
     「声明副作用的任务须自行保证幂等」。
     """
 
@@ -625,7 +625,7 @@ class TestDispatchRetryIgnoresSideEffects:
 
 
 # ---------------------------------------------------------------------------
-# 取消下发统一原语（#36：消重复 + 统一 cancel_failed 可观测）
+# 取消下发统一原语（去除重复实现 + 统一 cancel_failed 可观测）
 # ---------------------------------------------------------------------------
 
 class CancelFailAdapter(AsyncScriptedAdapter):
@@ -636,10 +636,10 @@ class CancelFailAdapter(AsyncScriptedAdapter):
 
 
 class TestUnifiedCancelPrimitive:
-    """#36：内部剪枝与外部整棵取消共用 `_send_cancel`。
+    """内部剪枝与外部整棵取消共用 `_send_cancel`。
 
-    回归点：两条取消路径曾各写一份循环，且外部路径用 `except: pass`
-    静默忽略失败——统一后两路都保留 `cancel_failed` 可观测。
+    回归点：两条取消路径此前各写一份循环，且外部路径以 `except: pass`
+    静默忽略失败；统一后两路均保留 `cancel_failed` 可观测记录。
     """
 
     def _info_logs(self, caplog):

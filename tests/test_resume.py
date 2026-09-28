@@ -1,4 +1,4 @@
-"""断点持久化与恢复测试（A+B 策略）。
+"""断点持久化与恢复测试（崩溃恢复策略）。
 
 覆盖：
 - StateStore 读写往返 / active_runs / delete
@@ -126,8 +126,8 @@ class TestResume:
     def test_running_state_persisted_during_schedule(self, tmp_path):
         """事件驱动落盘：任务启动（RUNNING）即持久化，崩溃点可识别执行中任务。
 
-        这是 A+B 策略生效的前提——若 RUNNING 不落盘，副作用任务崩溃恢复后
-        会退化为 PENDING 被当普通任务重派（副作用可能执行两次）。
+        这是该恢复策略生效的前提——若 RUNNING 不落盘，声明副作用的任务崩溃恢复后
+        会被当作普通任务重派，副作用可能执行两次。
         """
         store = SqliteStateStore(str(tmp_path / "s.db"))
         dag = DAG(tasks={"a": Task(id="a", desc="a")})

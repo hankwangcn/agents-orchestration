@@ -232,7 +232,7 @@ class RunManager:
                        "DEEPSEEK_API_KEY 后重启 serve，或注入自定义 decomposer",
             )
         try:
-            # 拆解是同步 LLM 调用（框架内部组件，不走协议），丢线程池避免阻塞事件循环
+            # 拆解是同步大模型调用（框架内部组件，不经消息协议），交由线程池执行以避免阻塞事件循环
             dag = await asyncio.to_thread(self._decomposer.decompose, goal)
         except DecomposeError as e:
             raise HTTPException(status_code=422, detail=f"拆解失败：{e}") from None
@@ -455,7 +455,7 @@ class RunManager:
     async def resume(self, run_id: str) -> str:
         """崩溃恢复：从 StateStore 加载 run 并继续调度（需启用断点持久化）。
 
-        RUNNING 任务按 A+B 策略处理：无副作用重派，有副作用置 INTERRUPTED。
+        运行中任务：无副作用者重新派发，声明副作用者置为 INTERRUPTED。
         """
         if self._store is None:
             raise HTTPException(
@@ -723,7 +723,7 @@ def create_app(
 
     @app.get("/api/runs")
     async def list_runs(limit: int = 50) -> dict:
-        """运行枚举（最近在前）——崩溃后/换进程后仍可发现已有 run。"""
+        """运行枚举（最近在前）——跨进程重启后仍可发现已有运行。"""
         return {"runs": manager.list_runs(limit=limit)}
 
 

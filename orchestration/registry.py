@@ -1,6 +1,6 @@
 """Agent 注册表——**组合门面**（架构 §3.2 规划层 × 调度层；阶段三起公开 API）。
 
-层间切分（本次详细设计的实施）：
+层间切分：
 - **规划层「资源统计器」** = `agent_pool.AgentPool`
   注册登记 / info_request 采集 / 声明解析入库 / 刷新（TTL + 决策点校验）/ 画像查询
 - **调度层「资源协调器」** = `allocator.Allocator`
@@ -10,7 +10,7 @@
 公开 API 不变——调度器 / 网关 / CLI / 审计 / 成本核算均按此接口调用，无需改动。
 需要哪一半能力，也可直接依赖 `AgentPool` / `Allocator`。
 
-核心设计不变：**能力是"问"出来的，不是配出来的**——配置只写接入三要素
+核心设计不变：**能力经信息请求采集获得，不写入配置**——配置只写接入三要素
 （base_url / model / api_key），能力 / 限制仍由 info_request 采集。
 """
 from __future__ import annotations

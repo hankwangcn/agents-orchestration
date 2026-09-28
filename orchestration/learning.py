@@ -266,7 +266,7 @@ class LearningEngine:
 
         - JUD-1：判定认为**目标未达成**——最上位的信号（过程全绿但交付没达
           成目标，是拆解粒度问题，不是执行问题）
-        - JUD-2：判定了但没拿到结论（判定链路故障 / 超时）——低优先级，
+        - JUD-2：判定已执行但未产出结论（判定链路故障 / 超时）——低优先级，
           只提示判定能力本身需要修
         """
         if reflection is None or not reflection.enabled:

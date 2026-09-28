@@ -24,7 +24,7 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     SKIPPED = "skipped"
-    INTERRUPTED = "interrupted"  # 断点恢复时副作用任务不自动重派，待人工确认（A+B 策略）
+    INTERRUPTED = "interrupted"  # 崩溃恢复时声明副作用的任务不自动重派，置为待人工确认
 
 
 class SideEffects(str, Enum):

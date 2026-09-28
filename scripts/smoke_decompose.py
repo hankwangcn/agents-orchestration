@@ -10,8 +10,8 @@
 CLI 侧调 orchestration.cli.main（**无 mock**，走真实 HTTP 打到本地网关），
 即验证 `ao decompose --submit` / `ao submit` / `ao wait` 全链路。
 
-第二部分验证 #34：agent 无响应（mock latency 30s）而任务声明 timeout=1 →
-框架侧 wall-clock 超时生效，run 不再空耗（且不污染后续派发）。
+第二部分验证执行层墙钟超时：agent 无响应（mock latency 30s）而任务声明 timeout=1 →
+框架侧 wall-clock 超时生效，运行不再停滞于运行中状态（且不污染后续派发）。
 
 运行：.venv/bin/python scripts/smoke_decompose.py
 """
@@ -116,8 +116,8 @@ async def main() -> int:
     print(f"mock agents: {server.base_url}（角色 {', '.join(server.configs)}）")
 
     reg = build_registry(f"{server.base_url}/v1")
-    # 注意：mock 服务端就在本事件循环里，同步采集必须丢线程——否则阻塞
-    # 事件循环会让服务端无法应答（请求与应答相互等待，形成互锁）
+    # 注意：mock 服务端位于本事件循环内，同步采集必须交由线程执行——否则阻塞
+    # 事件循环会使服务端无法应答（请求与应答相互等待，形成死锁）
     summary = await asyncio.to_thread(reg.collect)   # 真实 HTTP 能力采集
     assert all(s["ok"] for s in summary), summary
 
@@ -167,12 +167,12 @@ async def main() -> int:
               f"{len(report['assignments'])} 条")
         check("真实 usage 回填（成本 > 0）", report["total_cost"] > 0,
               f"${report['total_cost']}")
-        # 运行中快照 agent 归属（#26 修复项）也同时确认：终态快照里 agent 非空
+        # 同时确认运行中快照的 agent 归属：终态快照中 agent 非空
         check("任务均带 agent 归属",
               all(t["agent"] for t in snap["tasks"]),
               ", ".join(sorted({t["agent"] for t in snap["tasks"]})))
 
-        # ---------- 第二部分：#34 框架侧 wall-clock 超时 ----------
+        # ---------- 第二部分：框架侧 wall-clock 超时 ----------
         print("\n[2] 执行层 wall-clock 超时（无响应 agent + timeout=1）")
         dag = {"tasks": {"s1": {
             "id": "s1", "desc": "无响应任务",

@@ -67,8 +67,7 @@ class TestRender:
 
 
 class TestIdempotencyObligation:
-    """#58 定标（方案 B）：幂等责任归执行侧，由模板显式声明；
-    框架侧不对副作用任务的重复执行设拦截。"""
+    """幂等责任归执行侧，由模板显式声明；框架侧不对副作用任务的重复执行设拦截。"""
 
     def test_full_template_declares_idempotency_duty(self):
         assert "幂等" in PROTOCOL_PROMPT_FULL

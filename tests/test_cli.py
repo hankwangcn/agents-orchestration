@@ -88,7 +88,7 @@ class TestSubmit:
 
 
 class TestDecompose:
-    """规划层接入（#29）：ao decompose 目标 → DAG（可选 --submit 一并提交）。"""
+    """规划层接入：ao decompose 目标 → DAG（可选 --submit 一并提交）。"""
 
     DAG_RESP = {
         "goal": "做一件事", "status": "decomposed", "run_id": None,
@@ -301,7 +301,7 @@ class TestUrl:
 
 
 class TestGoalAndReflectionOutput:
-    """run 级目标 + 治理层判定（#41/#42）：submit --goal / status / report 展示。"""
+    """运行级目标与治理层判定：submit --goal / status / report 展示。"""
 
     @staticmethod
     def _dag_file(tmp_path):
@@ -384,7 +384,7 @@ class TestGoalAndReflectionOutput:
 
 
 class TestLearningLoopOutput:
-    """学习层闭环（#43/#44）：报告打印审计/成本/学习产物 + `ao lessons` 经验库。"""
+    """学习层闭环：报告打印审计 / 成本 / 学习产物 + `ao lessons` 经验库。"""
 
     AUDIT = {
         "verdict": "warning", "success_rate": 0.5,
@@ -456,7 +456,7 @@ class TestLearningLoopOutput:
 
 
 class TestArchiveOutput:
-    """运行存档接口（#48/#49）：`ao runs` 枚举 + `ao view` 人读视图 + `ao narrate`。"""
+    """运行存档接口：`ao runs` 枚举 + `ao view` 人读视图 + `ao narrate`。"""
 
     RUNS = {"runs": [
         {"run_id": "r1", "goal": "整理比价报告", "run_status": "success",

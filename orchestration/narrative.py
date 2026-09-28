@@ -68,7 +68,7 @@ class Narrator:
         return {"text": text, "model": self.model, "created_at": _now()}
 
     async def anarrate(self, view: dict) -> dict:
-        """异步生成（网关：丢线程池避免阻塞事件循环）。"""
+        """异步生成（网关：交由线程池执行，避免阻塞事件循环）。"""
         return await asyncio.to_thread(self.narrate, view)
 
 

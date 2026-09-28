@@ -114,7 +114,7 @@ async def main() -> int:
             registry.register(adapter, agent_id=agent_id)
 
         print("\n== 1. info_request 能力采集（真实 HTTP）==")
-        # collect 走同步 OpenAI client（_call_llm），丢线程避免阻塞事件循环
+        # collect 走同步 OpenAI client（_call_llm），交由线程执行以避免阻塞事件循环
         # （uvicorn mock 服务与调度在同一 loop，同步阻塞会死锁）
         for item in await asyncio.to_thread(registry.collect):
             print(f"   [{item['agent_id']}] {item['scope']}: "

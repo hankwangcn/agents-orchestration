@@ -13,7 +13,7 @@
   CANCELLED、RUNNING 下发取消、等待收尾），final_status=cancelled
 - **框架侧 wall-clock 超时**：单次执行超过 task.required_resources.timeout
   即 `asyncio.wait_for` 中断（内层协程取消 → 并发槽随 `async with sem`
-  释放，agent 无响应不再永久占住调度资源），产出 error.code=timeout 的
+  释放，agent 无响应不再长期占用调度资源），产出 error.code=timeout 的
   失败 Result，汇入既有重试/剪枝链路
 - **可观测性**：结构化日志 + MetricsCollector（按 run_id 隔离，
   同一实例可并发运行多个 run——RunManager 场景，状态全部在 _RunCtx 内）
@@ -336,7 +336,7 @@ class AsyncScheduler:
     ) -> ScheduleReport:
         """崩溃恢复：从 StateStore 加载 run 并继续调度至终态。
 
-        恢复语义（A+B 策略，对话共识）：
+        恢复语义：
         - RUNNING + 无副作用 → 重置 PENDING 重派（纯产出，重复执行可接受）
         - RUNNING + 声明副作用 → 置 INTERRUPTED 不重派（副作用执行两次
           不可逆），等人工 resolve（complete/cancel/retry）
@@ -464,12 +464,12 @@ class AsyncScheduler:
         last: Result | None = None
         for attempt in range(self.retries + 1):
             if task.status in (TaskStatus.CANCELLED, TaskStatus.SKIPPED):
-                break  # 外部已判定取消 → 停止（不再烧钱）
+                break  # 外部已判定取消 → 停止（不再产生调用成本）
             request_id = f"{task.id}:run:{attempt}"
             timeout = task.required_resources.timeout
             try:
                 call = adapter.arun_task(task, request_id=request_id, inputs=inputs)
-                # 框架侧 wall-clock 超时：为"槽被无响应任务占住"设置上限。
+                # 框架侧 wall-clock 超时：为"并发槽被无响应任务占用"设置上限。
                 # 超时的不是声明给 agent 看的建议值，而是框架强制——
                 # asyncio.wait_for 取消内层协程（槽随 async with sem 释放），
                 # 产出失败 Result 汇入既有重试/剪枝链路。

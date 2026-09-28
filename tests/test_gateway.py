@@ -309,7 +309,7 @@ class TestGatewayAPI:
 
 
 class TestGoalAndReflection:
-    """run 级目标 + 治理层判定（#41/#42）：提交带 goal → 收尾按目标判定交付。"""
+    """运行级目标与治理层判定：提交带 goal → 收尾按目标判定交付。"""
 
     JUDGE_VERDICT = {"achieved": False, "score": 0.4,
                      "reasons": ["只看到中间数据，最终报告缺失"],
@@ -430,7 +430,7 @@ class TestGoalAndReflection:
 
 
 class TestArchiveAndWeb:
-    """运行存档闭环 + 接入层 Web 页面（#48/#49）。
+    """运行存档闭环与接入层 Web 页面。
 
     覆盖：过程事件流落盘、报告读回（进程重启后）、运行枚举、人读投影端点、
     Web 页面（列表 + 详情）、叙述摘要（显式触发、非确定、单独记录）。
@@ -637,4 +637,4 @@ class TestArchiveAndWeb:
             }).json()["run_id"]
             resp = client.post(f"/api/runs/{rid}/narrative")
             assert resp.status_code == 409  # 尚未收尾
-            manager._runs[rid].cancel_event.set()  # 收尾，避免悬挂
+            manager._runs[rid].cancel_event.set()  # 收尾，避免残留未处理的取消状态

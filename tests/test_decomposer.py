@@ -1,8 +1,8 @@
-"""任务拆解引擎测试（#30）：Schema 七关校验、修正提示重试、temperature 接线。
+"""任务拆解引擎测试：Schema 七关校验、修正提示重试、temperature 接线。
 
 拆解**不走消息协议**（框架内部 LLM 调用，协议是框架 ↔ 外部 agent 的边界），
 故用最简的脚本化 llm_call（提示词 → 原始文本）替代适配器——正好验证拆解
-引擎只依赖"给提示词、拿回文本"这一个约定。
+引擎只依赖"提交提示词、接收文本"这一个约定。
 """
 from __future__ import annotations
 
@@ -112,8 +112,8 @@ class TestSchemaGates:
             ({"foo": 1}, "缺少 tasks 列表"),                      # tasks 缺失
             ({"tasks": []}, "tasks 为空"),                        # 非空
             ({"tasks": ["x"]}, "非对象项"),                       # 逐项为对象
-            ({"tasks": [{"desc": "d"}]}, "缺少 id"),              # id 必备
-            ({"tasks": [{"id": "t1"}]}, "缺少 desc"),             # desc 必备
+            ({"tasks": [{"desc": "d"}]}, "缺少 id"),              # id 为必需字段
+            ({"tasks": [{"id": "t1"}]}, "缺少 desc"),             # desc 为必需字段
             ({"tasks": [{"id": "", "desc": "d"}]}, "缺少 id"),    # id 非空
             ({"tasks": [{"id": "t1", "desc": "a"},
                         {"id": "t1", "desc": "b"}]}, "id 重复"),  # 去重
@@ -249,8 +249,8 @@ class TestDefaultDecomposer:
 
 
 class TestAdjudicationScopeDeclaration:
-    """执行侧裁定范围声明（#57 ⑤）：子任务描述给出目标与结果要求即可——契约
-    范围内的取舍由执行侧自行裁定，无需在子任务中穷举偏好或预设决策分支。"""
+    """执行侧裁定范围声明：子任务描述给出目标与结果要求即可——契约范围内的取舍
+    由执行侧自行裁定，无需在子任务中穷举偏好或预设决策分支。"""
 
     def test_prompt_declares_execution_side_adjudication(self):
         assert "取舍由执行侧自行裁定" in DECOMPOSITION_PROMPT

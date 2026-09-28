@@ -6,8 +6,8 @@ https://api.deepseek.com。实现 _call_llm 即完成协议接入——协议装
 
 api_key 默认从环境变量 DEEPSEEK_API_KEY 读取（构造时未显式传入）。
 
-真实元数据回填（冒烟实测发现）：真实 LLM 不会自报 usage（协议 §4.2 的
-agent 自报仅在缺失时采用），真实 token / 耗时只能从 API 响应捕获——
+真实元数据回填：真实 LLM 不自报 usage（协议 §4.2 的 agent 自报仅在缺失时采用），
+真实 token 与耗时取自 API 响应——
 _call_llm/_acall_llm 用 contextvars 记录（协程隔离，多协程共享实例无竞态），
 _post_process 在解析后回填 Result.usage 与 duration_ms。
 
@@ -83,7 +83,7 @@ class DeepSeekAdapter(AgentAdapter):
     def _post_process(self, result: Result) -> Result:
         """回填真实 token / 耗时 / 成本（agent 自报值为 0 时覆盖）。
 
-        真实 API 值优先：LLM 自报的 usage 不可信（冒烟实测全 0）。
+        真实 API 值优先：LLM 自报的 usage 不可信（实测恒为 0）。
         """
         meta = _meta_ctx.get()
         if not meta:

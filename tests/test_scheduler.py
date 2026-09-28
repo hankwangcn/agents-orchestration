@@ -389,7 +389,7 @@ class BlockingAdapter(AgentAdapter):
 
 
 class TestFrameworkTimeout:
-    """#34（同步路径）：框架侧 wall-clock 超时上限终止无响应的 agent 调用。"""
+    """框架侧 wall-clock 超时上限终止无响应的 agent 调用（同步路径）。"""
 
     def test_hanging_task_times_out(self):
         dag = DAG(tasks={"a": Task(
@@ -423,7 +423,7 @@ class TestFrameworkTimeout:
 
 
 # ---------------------------------------------------------------------------
-# 死参清理（#36：同步 Scheduler 的 backoff_base 存了不用）
+# 未消费参数清理（同步 Scheduler 的 backoff_base 保存但未消费）
 # ---------------------------------------------------------------------------
 
 class TestNoDeadBackoffParam:

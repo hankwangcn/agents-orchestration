@@ -1,11 +1,11 @@
 """断点持久化（StateStore）：调度状态的 SQLite 落盘与恢复。
 
-设计（对话共识）：
+设计：
 - **结果导向与断点不冲突**：断点只存框架侧的调度状态（DAG 快照 + 每个任务
-  status/result/assignment），不碰 agent 内部状态——"只管结果"哲学不变。
+  status/result/assignment），不涉及 agent 内部状态——"只管理结果"的原则不变。
 - **事件驱动写入**：任务状态变更（启动/完成/失败/取消/剪枝）即写，非定期
   快照——崩溃点数据最新，丢失窗口≈0。
-- **恢复策略（A+B）**：
+- **恢复策略**：
   - RUNNING + 无副作用 → 重置 PENDING **重派**（纯产出，重复执行可接受，
     最坏损失一次成本；恢复后任务 attempt 语义由调度器重试计数表达）
   - RUNNING + 声明副作用 → 置 INTERRUPTED **不自动重派**（重派 = 副作用
@@ -19,7 +19,7 @@ prune_reports（随 run 行存）+ learning_lessons 表（学习层经验库—�
 SQLite 单文件、无外部依赖；可换 Postgres（StateStore 抽象，实现同签名即可——
 经验库、事件流、叙述摘要均为可选能力，未实现则各自退化）。
 
-**归档分层（对话共识）**：运行存档 = 过程（事件流）+ 终态报告（report_json），
+**归档分层**：运行存档 = 过程（事件流）+ 终态报告（report_json），
 属**持久化底座**（state face），是唯一权威来源、单 run 不可变；治理层是其生产者
 之一（审计/成本/判定附载回报告），学习层是消费者（读同一份 → 经验库）。人读版
 是**读时投影**（按需渲染，不落盘成第二份权威来源）。
@@ -157,7 +157,7 @@ class StateStore(ABC):
         return None
 
     def list_runs(self, limit: int = 50) -> list[dict]:
-        """运行枚举（最近在前）：崩溃后/换进程后仍可发现已有 run。"""
+        """运行枚举（最近在前）：跨进程重启后仍可发现已有运行。"""
         return []
 
     def save_narrative(self, run_id: str, narrative: dict) -> None:

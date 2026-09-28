@@ -94,9 +94,9 @@ class TestReplSession:
     def test_non_cli_error_does_not_exit_session(self, capsys):
         """命令实现抛出任意异常（如文件不存在）→ 打印错误信息但会话继续。
 
-        回归（P2）：_repl 此前只捕获 CliError/KeyboardInterrupt，
-        cmd_submit 的 open() 抛 FileNotFoundError 会穿透循环整场退出
-        （rc=1），违背"错误不退出会话"承诺。
+        回归：会话循环捕获 CliError 与 KeyboardInterrupt；提交命令的 open() 抛出
+        FileNotFoundError 时会穿透循环、整场退出（rc=1），违背"错误不退出会话"的
+        承诺。
         """
         inputs = ["submit /no/such/file.json", "status r1", "exit"]
         with mock.patch("builtins.input", side_effect=inputs), \

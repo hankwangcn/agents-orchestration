@@ -191,8 +191,8 @@ def _is_schema_node(spec: Any) -> bool:
 def validate_output_schema(output: Any, schema: Any, path: str = "output") -> None:
     """校验 output 是否符合简化 output_schema；不符抛 ResponseValidationError。
 
-    这是双层校验第二层的扩展（协议 §7.2「必填字段、类型、嵌套结构」）——
-    此前 output_schema 只作提示随请求下发，框架侧无强制，坏结构可静默通过。
+    这是双层校验第二层的组成部分（协议 §7.2「必填字段、类型、嵌套结构」）：
+    成功响应的产出结构不符即判失败，进入修正重试。
     """
     if not isinstance(schema, dict) or _is_schema_node(schema):
         return

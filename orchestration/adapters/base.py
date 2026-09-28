@@ -45,7 +45,7 @@ class AgentAdapter(ABC):
         """调用底层模型，返回原始响应文本。"""
 
     async def _acall_llm(self, messages: list[dict]) -> str:
-        """异步调用底层模型。默认：同步实现丢线程池（不阻塞事件循环）。
+        """异步调用底层模型。默认：同步实现交由线程池执行（不阻塞事件循环）。
 
         追求原生异步的 adapter（如 DeepSeekAdapter 用 AsyncOpenAI）override 此方法。
         """

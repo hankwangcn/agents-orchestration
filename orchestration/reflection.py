@@ -1,17 +1,16 @@
 """反思 / 判定模块（架构 §3.2 **治理层**）：产出是否达成原始目标。
 
-定位：框架此前只在**契约/结构**层面判定"结果符合预期"（解析组件 + 审计对账），
-产出**内容**正确性无人判定——格式完美但内容错误的结果会被判 SUCCESS。
-本模块补上语义判定这一环。
+定位：框架在契约与结构层面已有判定（解析组件强制约束、审计事实对账），但产出内容的
+正确性尚无判定——格式正确而内容错误的结果会被判为成功。本模块承担语义判定。
 
 判定基准（唯一有效）：**用户原始目标（goal）**。
-- 子任务描述是框架自己的拆解产物，拿产出跟它比对 = 自己出题自己判（自证循环）；
+- 子任务描述由框架自身生成，以其为基准比对产出即循环论证；
 - 子任务结果只作**证据**随附（让判定者知道过程中发生了什么），不作基准。
 
 判定者（判定能力也是一种"能力"）：
 - 优先用注册表中声明 `judge`/`reviewer` 能力的 **independent** agent
   （能力由 info_request 采集，与其它 agent 同构；可指向异构模型——
-  同一个模型自己判自己不可信）；
+  同一模型自评，可信度不足）；
 - 无此类 agent 时，按 `allow_self_judge` 决定：降级为自判（在报告中标记
   `independent=False`，**明确这是可靠性打折的判定**）或直接跳过。
 
@@ -24,7 +23,7 @@
 动作边界（**advisory，不阻断**）：
 - 结论写入 ScheduleReport.reflection（报告可见）+ 供学习层消费（JUD-* 规则）；
 - **不改任务状态、不自动重新执行、不阻断交付**——是否采纳由审计/人工定夺
-  （副作用任务重派 = 副作用执行两次，是既有红线）。
+  （副作用任务重派 = 副作用执行两次，为既有强制约束）。
 
 审计边界（不得混淆）：审计是**只读、纯函数、结论可重复（可重放）**的事实对账；判定是
 **非确定、有成本**的语义结论。两者独立记录，不合并——合并会破坏审计
@@ -67,7 +66,7 @@ INPUT 里是你的判定素材（JSON）：
 
 判定要求：
 1. 基准只能是 goal。**不要把某个子任务的描述当作验收标准**——子任务是
-   拆分产物，用它当基准等于自己出题自己判。
+   拆分产物，以其为基准即循环论证。
 2. deliverables 是待验对象，evidence 只是理解过程的证据。
 3. 只判断"交付是否达成目标"；不评价过程好坏，不提执行建议。
 4. 目标未达成时，在 gaps 里逐条指出还差什么、缺什么。
@@ -90,7 +89,7 @@ class ReflectionReport(BaseModel):
     """一次判定的结论（advisory）。
 
     enabled=False 表示本次未做判定（无目标 / 无判定 agent）——`skipped_reason`
-    说明原因；`judged=False` 且 `error_code` 非空表示判定了但未拿到结论。
+    说明原因；`judged=False` 且 `error_code` 非空表示判定已执行但未产出结论。
     """
 
     enabled: bool = True
@@ -112,14 +111,14 @@ class ReflectionReport(BaseModel):
 
     @property
     def ok(self) -> bool:
-        """是否拿到了可用结论。"""
+        """是否产出了可用结论。"""
         return self.judged and self.achieved is not None
 
 
 class Reflector:
     """运行级判定器：最终交付 × 原始目标 → ReflectionReport。
 
-    registry：只读用途（挑判定 agent / 判定失败时降级分配），与审计器同构。
+    registry：只读用途（选定判定 agent / 判定失败时降级分配），与审计器同构。
     max_chars：单个产出/摘要的截断上限（判定请求要控规模，不得全文注入交付产出）。
     allow_self_judge：无独立判定 agent 时是否降级自判（默认允许，但报告里
     标记 independent=False）。
@@ -225,7 +224,7 @@ class Reflector:
         goal: str,
         run_id: str,
     ) -> "tuple[ReflectionReport, Task, Assignment, AgentAdapter] | ReflectionReport":
-        """挑判定 agent。返回 (报告, 任务, 分配, 适配器) 或"跳过"的报告。"""
+        """选定判定 agent。返回 (报告, 任务, 分配, 适配器) 或"跳过"的报告。"""
         out = ReflectionReport(goal=goal)
         out.request_id = f"reflection:{run_id or 'run'}"
 

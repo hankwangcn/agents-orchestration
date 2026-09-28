@@ -6,7 +6,7 @@
   → 对剪枝时仍在运行的任务下发取消（best-effort，架构 §5.3）
 - 竞态（§5.3）：剪枝后重新计算可派发集合，天然冻结被剪任务的派发
 - 框架侧 wall-clock 超时：单次执行超过 required_resources.timeout 即判
-  失败（agent 无响应不再永久占住调度资源），产出 Result 汇入既有重试/
+  失败（agent 无响应不再长期占用调度资源），产出 Result 汇入既有重试/
   剪枝链路
 """
 from __future__ import annotations

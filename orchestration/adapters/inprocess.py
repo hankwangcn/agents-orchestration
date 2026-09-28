@@ -13,10 +13,10 @@ InProcessAdapter 把"调用"直接接到本地函数上，协议装配 / 双层�
 
 两种返回形态（fn 二选一）：
 - 返回 str  —— 按协议原样进入解析层（推荐：与真实 agent 行为一致，
-  能暴露格式漂移，冒烟/测试更逼真）；
+  能暴露格式漂移，测试更接近真实形态）；
 - 返回 dict —— 自动 JSON 序列化后再进解析层（便捷形态）。
 
-异步：同步 fn 经基类默认 _acall_llm 丢线程池，AsyncScheduler 可直接使用。
+异步：同步 fn 经基类默认 _acall_llm 交由线程池执行，AsyncScheduler 可直接使用。
 """
 from __future__ import annotations
 

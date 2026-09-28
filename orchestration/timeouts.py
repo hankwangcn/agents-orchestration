@@ -1,6 +1,6 @@
-"""框架侧 wall-clock 超时原语（执行层 #34 与规划层 info 采集共用）。
+"""框架侧 wall-clock 超时原语（任务执行与信息采集共用）。
 
-执行层对单次任务调用设墙钟上限（#34）；规划层对 info_request 采集同样设
+任务执行对单次调用设墙钟上限；信息采集同样设
 墙钟上限（决策点校验 / TTL 刷新都在调用方路径上，采集无响应不能无上限地
 阻塞调用方）。两者共用同一原语，避免各写一份。
 
@@ -19,14 +19,14 @@ def call_with_timeout(fn: Callable[[], T], timeout_seconds: float) -> T:
 
     用 daemon 线程执行——超时后调用方立即返回（不阻塞解释器退出），无响应的
     调用不再被等待。这正是"为调用占用设置上限"的目的：调用方资源随超时释放，
-    被调方即便不中断也不再阻塞整条链路。原调用方异常原样回抛。
+    被调方即便不中断也不再阻塞整条链路。调用方自身的异常原样向上抛出。
     """
     box: dict = {}
 
     def _target() -> None:
         try:
             box["result"] = fn()
-        except BaseException as e:  # 原样回抛给调用方（含适配器自身异常）
+        except BaseException as e:  # 原样向上抛出给调用方（含适配器自身异常）
             box["error"] = e
 
     th = threading.Thread(target=_target, daemon=True)
