@@ -11,32 +11,34 @@
   }
   *{box-sizing:border-box; margin:0; padding:0;}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-       background:var(--bg); color:var(--ink); padding:22px 16px 30px;}
-  .wrap{max-width:860px; margin:0 auto;}
+       background:var(--bg); color:var(--ink); padding:16px 14px 22px;}
+  .wrap{max-width:1500px; margin:0 auto;}
 
   header{background:linear-gradient(135deg,#0f172a,#312e81 130%); color:#fff;
-         border-radius:12px; padding:16px 20px; margin-bottom:14px;}
-  h1{font-size:17px; font-weight:700;}
-  header p{color:#cbd5e1; font-size:12px; margin-top:4px; line-height:1.5;}
+         border-radius:10px; padding:12px 20px; margin-bottom:10px;
+         display:flex; align-items:baseline; gap:18px; flex-wrap:wrap;}
+  h1{font-size:16px; font-weight:700; white-space:nowrap;}
+  header p{color:#cbd5e1; font-size:12px; line-height:1.4;}
 
   .band{background:var(--card); border:1px solid var(--line); border-left:4px solid var(--lc);
-        border-radius:10px; padding:10px 14px 11px;}
-  .band.base{border-top:4px solid var(--store); border-left-color:var(--store);}
+        border-radius:8px; padding:8px 16px;
+        display:grid; grid-template-columns:230px minmax(0,1fr) auto; gap:18px; align-items:center;}
+  .band.base{border-left-color:var(--store);}
   .head{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;}
   .idx{font-size:10px; font-weight:700; color:var(--lc); opacity:.7; letter-spacing:1px;}
   .name{font-size:13px; font-weight:700; color:var(--lc); letter-spacing:1.5px;}
   .role{font-size:10px; font-weight:600; color:var(--lc); border:1px solid currentColor;
-        border-radius:999px; padding:0 8px; margin-left:auto; white-space:nowrap; opacity:.85;}
-  .fn{font-size:12.5px; color:var(--ink2); line-height:1.55; margin-top:5px;
-      padding-left:9px; border-left:2px solid var(--lc);}
-  .mods{font-size:11px; color:var(--ink3); margin-top:7px; letter-spacing:.2px;}
+        border-radius:999px; padding:0 8px; white-space:nowrap; opacity:.85;}
+  .fn{font-size:12.5px; color:var(--ink2); line-height:1.45;}
+  .mods{font-size:11px; color:var(--ink3); text-align:right; white-space:nowrap;}
   .mods b{color:var(--ink2); font-weight:600;}
 
-  .flow{display:flex; align-items:center; gap:8px; padding:4px 4px; font-size:10.5px; color:var(--ink4);}
-  .flow svg{width:14px; height:9px; flex:0 0 auto;}
+  .flow{display:flex; align-items:center; gap:8px; padding:2px 6px; font-size:10px; color:var(--ink4);}
+  .flow svg{width:13px; height:8px; flex:0 0 auto;}
   .flow span{font-weight:600; color:var(--ink3);}
 
-  footer{margin-top:16px; text-align:center; font-size:10.5px; color:var(--ink4); line-height:1.7;}
+  footer{margin-top:12px; display:flex; justify-content:center; gap:26px; flex-wrap:wrap;
+         font-size:10.5px; color:var(--ink4);}
   footer b{color:var(--ink3); font-weight:600;}
 </style>
 </head>
@@ -45,7 +47,7 @@
 
 <header>
   <h1>Agents Orchestration — Architecture Overview</h1>
-  <p>Result-driven orchestration. The framework schedules tasks and collects result contracts only; it does not observe agent internals. Six functional layers over a shared persistence base.</p>
+  <p>Result-driven orchestration: the framework schedules tasks and collects result contracts only, and does not observe agent internals. Six functional layers over a shared persistence base.</p>
 </header>
 
 <!-- ACCESS -->
@@ -55,25 +57,25 @@
   <div class="mods"><b>API Gateway</b> · CLI · Web · Library API</div>
 </section>
 
-<div class="flow"><svg viewBox="0 0 14 9"><path d="M1 4.5 H11 M8.5 1.5 L12 4.5 L8.5 7.5" stroke="#94a3b8" stroke-width="1.4" fill="none"/></svg><span>goal → task graph</span></div>
+<div class="flow"><svg viewBox="0 0 13 8"><path d="M1 4 H10 M8 1.5 L11 4 L8 6.5" stroke="#94a3b8" stroke-width="1.3" fill="none"/></svg><span>goal → task graph</span></div>
 
 <!-- PLAN -->
 <section class="band" style="--lc:#6d28d9">
   <div class="head"><span class="idx">02</span><span class="name">PLAN</span><span class="role">Goal → task graph</span></div>
-  <div class="fn">Decompose a natural-language goal into an executable, auditable task graph; derive its structural analysis and the agent resource profile.</div>
+  <div class="fn">Turn a natural-language goal into an executable, auditable task graph; derive its structural analysis and the agent resource profile.</div>
   <div class="mods"><b>Task Decomposer</b> · Dependency Analysis · Resource Collector</div>
 </section>
 
-<div class="flow"><svg viewBox="0 0 14 9"><path d="M1 4.5 H11 M8.5 1.5 L12 4.5 L8.5 7.5" stroke="#94a3b8" stroke-width="1.4" fill="none"/></svg><span>task graph + capabilities</span></div>
+<div class="flow"><svg viewBox="0 0 13 8"><path d="M1 4 H10 M8 1.5 L11 4 L8 6.5" stroke="#94a3b8" stroke-width="1.3" fill="none"/></svg><span>task graph + capabilities</span></div>
 
 <!-- SCHEDULE -->
 <section class="band" style="--lc:#0f766e">
   <div class="head"><span class="idx">03</span><span class="name">SCHEDULE</span><span class="role">Allocate · dispatch · converge</span></div>
-  <div class="fn">Assign an agent instance per task and advance the graph in topological order within declared resource limits; converge failures by retry, propagation, pruning and cancellation.</div>
-  <div class="mods"><b>Resource Allocator</b> · DAG Scheduler (sync / async) · Failure Handling</div>
+  <div class="fn">Assign an agent instance per task and advance the graph in topological order within resource limits; converge failures by retry, propagation, pruning and cancellation.</div>
+  <div class="mods"><b>Resource Allocator</b> · DAG Scheduler · Failure Handling</div>
 </section>
 
-<div class="flow"><svg viewBox="0 0 14 9"><path d="M1 4.5 H11 M8.5 1.5 L12 4.5 L8.5 7.5" stroke="#94a3b8" stroke-width="1.4" fill="none"/></svg><span>task_request / info_request</span></div>
+<div class="flow"><svg viewBox="0 0 13 8"><path d="M1 4 H10 M8 1.5 L11 4 L8 6.5" stroke="#94a3b8" stroke-width="1.3" fill="none"/></svg><span>task_request / info_request</span></div>
 
 <!-- EXECUTE -->
 <section class="band" style="--lc:#b45309">
@@ -82,7 +84,7 @@
   <div class="mods"><b>Agent Adapter</b> · External Agent</div>
 </section>
 
-<div class="flow"><svg viewBox="0 0 14 9"><path d="M1 4.5 H11 M8.5 1.5 L12 4.5 L8.5 7.5" stroke="#94a3b8" stroke-width="1.4" fill="none"/></svg><span>result contract</span></div>
+<div class="flow"><svg viewBox="0 0 13 8"><path d="M1 4 H10 M8 1.5 L11 4 L8 6.5" stroke="#94a3b8" stroke-width="1.3" fill="none"/></svg><span>result contract</span></div>
 
 <!-- GOVERN -->
 <section class="band" style="--lc:#be185d">
@@ -91,28 +93,28 @@
   <div class="mods"><b>Result Auditor</b> · Reflection / Judge · Cost Accounting · Observability</div>
 </section>
 
-<div class="flow"><svg viewBox="0 0 14 9"><path d="M1 4.5 H11 M8.5 1.5 L12 4.5 L8.5 7.5" stroke="#94a3b8" stroke-width="1.4" fill="none"/></svg><span>governance findings</span></div>
+<div class="flow"><svg viewBox="0 0 13 8"><path d="M1 4 H10 M8 1.5 L11 4 L8 6.5" stroke="#94a3b8" stroke-width="1.3" fill="none"/></svg><span>governance findings</span></div>
 
 <!-- LEARN -->
 <section class="band" style="--lc:#4d7c0f">
   <div class="head"><span class="idx">06</span><span class="name">LEARN</span><span class="role">Review · accumulate · feed back</span></div>
-  <div class="fn">Review each run read-only, grade findings by evidence strength, persist them into a cross-run lesson base and feed qualifying lessons into the decomposition prompt.</div>
-  <div class="mods"><b>Review &amp; Rule Extraction</b> · Lesson Base (cross-run) · Prompt Advisor</div>
+  <div class="fn">Review each run read-only, grade findings by evidence strength, persist a cross-run lesson base and feed qualifying lessons into the decomposition prompt.</div>
+  <div class="mods"><b>Review &amp; Rule Extraction</b> · Lesson Base · Prompt Advisor</div>
 </section>
 
-<div class="flow"><svg viewBox="0 0 14 9"><path d="M1 4.5 H11 M8.5 1.5 L12 4.5 L8.5 7.5" stroke="#94a3b8" stroke-width="1.4" fill="none"/></svg><span>run archive</span></div>
+<div class="flow"><svg viewBox="0 0 13 8"><path d="M1 4 H10 M8 1.5 L11 4 L8 6.5" stroke="#94a3b8" stroke-width="1.3" fill="none"/></svg><span>run archive</span></div>
 
 <!-- PERSISTENCE BASE -->
 <section class="band base">
   <div class="head"><span class="idx">BASE</span><span class="name">PERSISTENCE</span><span class="role">Cross-layer foundation</span></div>
   <div class="fn">Persist scheduling state as an event stream and the terminal report as an immutable run archive, enabling crash recovery, replay and review.</div>
-  <div class="mods"><b>State Store</b> · Run Archive (event stream + terminal report)</div>
+  <div class="mods"><b>State Store</b> · Run Archive</div>
 </section>
 
 <footer>
-  <b>Agents Orchestration</b> · 6 functional layers / 20 modules over a shared persistence base<br>
-  Learning feedback loop: cross-run lessons → decomposition prompt (Learn → Plan)<br>
-  Source of record: hankwangcn/agents-orchestration
+  <span><b>6 functional layers · 20 modules</b> over a shared persistence base</span>
+  <span><b>Feedback loop</b> cross-run lessons → decomposition prompt (Learn → Plan)</span>
+  <span><b>Source of record</b> hankwangcn/agents-orchestration</span>
 </footer>
 
 </div>
