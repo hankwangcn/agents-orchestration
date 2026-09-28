@@ -16,7 +16,7 @@
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
     background:var(--bg); color:var(--ink); padding:28px 20px 40px;
   }
-  .wrap{max-width:1200px; margin:0 auto;}
+  .wrap{max-width:1240px; margin:0 auto;}
 
   /* ---------- 头部 ---------- */
   header{
@@ -82,7 +82,7 @@
 
   /* ---------- 组件卡片 ---------- */
   .card{
-    flex:1 1 0; min-width:268px; background:#fbfdff;
+    flex:1 1 0; min-width:290px; background:#fbfdff;
     border:1px solid var(--line); border-radius:12px; padding:14px 16px 15px;
     transition:box-shadow .15s ease, transform .15s ease;
   }
@@ -104,11 +104,24 @@
     color:#fff; background:var(--cc); border-radius:3px; padding:1px 5px;
     margin-right:7px; vertical-align:1px;
   }
-  .card-desc{font-size:12px; color:var(--ink2); line-height:1.62; margin-top:8px;}
-  .card-desc .tag{
+  .card-flow{margin-top:9px;}
+  .card-flow .tag{
     display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:1px;
     color:var(--lc); margin-right:6px;
   }
+  .card-flow ol{list-style:none; margin:4px 0 0; padding:0; counter-reset:step;}
+  .card-flow li{
+    position:relative; padding-left:23px; margin-top:5px;
+    font-size:12px; color:var(--ink2); line-height:1.6;
+    counter-increment:step;
+  }
+  .card-flow li::before{
+    content:counter(step);
+    position:absolute; left:0; top:1px; width:15px; height:15px; border-radius:50%;
+    background:var(--cc); color:#fff; font-size:9.5px; font-weight:700; line-height:15px;
+    text-align:center;
+  }
+  .card-flow b{color:var(--ink); font-weight:600;}
   .path{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:10.5px; color:var(--ink3); font-weight:400;}
 
   /* ---------- 底座层（跨层基础） ---------- */
@@ -142,7 +155,7 @@
     <div class="logo">AO</div>
     <div>
       <h1>Agents Orchestration — 架构总览</h1>
-      <p>结果导向的 Agent 编排框架（Result-driven Orchestration）· 仅管理任务与结果，不观测 agent 内部执行状态 · 提示词即协议，agent 侧无需适配</p>
+      <p>结果导向的 Agent 编排框架（Result-driven Orchestration）· 仅管理任务与结果，不观测 agent 内部执行状态 · 提示词即协议，agent 侧无需适配<br>每个模块以「一句话核心功能 + 分步工作流程」呈现</p>
     </div>
   </div>
   <div class="legend">
@@ -188,25 +201,54 @@
         <div class="card" style="--cc:#0284c7; --lc:#0284c7">
           <div class="card-title"><span class="mk"></span>API 网关</div>
           <div class="card-fn"><span class="tag">核心功能</span>框架唯一的 HTTP 服务入口，承载运行全生命周期的对外接口与后台任务管理。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>REST 服务，承载目标拆解 <span class="path">POST /api/decompose</span>、任务图提交 <span class="path">POST /api/runs</span>、运行枚举 <span class="path">GET /api/runs</span>、进度快照、收尾报告 <span class="path">GET /api/runs/{id}/report</span>、人读投影 <span class="path">GET /api/runs/{id}/view</span>、叙述摘要 <span class="path">POST /api/runs/{id}/narrative</span>、运行指标、运行取消、断点恢复、人工确认、agent 档案 <span class="path">GET /api/agents</span> 与跨运行经验库 <span class="path">GET /api/lessons</span>；并负责任务的后台执行与生命周期管理。agent 侧通信不经由该入口暴露。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>接收 HTTP 请求，按端点路由至对应能力</li>
+              <li>拆解请求（<span class="path">POST /api/decompose</span>）产出任务图；或提交请求（<span class="path">POST /api/runs</span>）接收既有任务图</li>
+              <li>任务图落盘为运行存档，返回运行标识</li>
+              <li>运行交由后台任务执行，期间持续更新状态与事件流</li>
+              <li>查询、治理、恢复类请求从存档读回并返回响应（报告、投影、指标、经验库、agent 档案等）</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#0284c7; --lc:#0284c7">
           <div class="card-title"><span class="mk"></span>Web 页面</div>
           <div class="card-fn"><span class="tag">核心功能</span>运行存档的人读界面，完整呈现一次运行的执行过程。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>服务端渲染，同源部署、无需构建工具、不涉及跨域；含运行列表 <span class="path">GET /</span> 与运行详情 <span class="path">GET /runs/{id}</span>，详情呈现过程时间线、任务与结果、分配记录、失败传播、治理结论与学习规则。人读版是运行存档的读时投影——按需渲染、纯函数（同一份存档渲染同一份视图，可重放、无额外成本），不落盘为独立数据副本。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>运行列表（<span class="path">GET /</span>）枚举全部运行</li>
+              <li>运行详情（<span class="path">GET /runs/{id}</span>）读取该运行的存档</li>
+              <li>由存档投影为人读视图（纯函数，同一存档渲染同一视图，可重放、无额外成本）</li>
+              <li>服务端渲染为 HTML 返回；投影按需生成，不落盘为独立数据副本</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#0284c7; --lc:#0284c7">
           <div class="card-title"><span class="mk"></span>命令行客户端</div>
           <div class="card-fn"><span class="tag">核心功能</span>接入能力的命令行形态，将框架全部操作暴露至终端与交互式会话。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>仅依赖标准库的轻量客户端。子命令覆盖拆解、提交、报告、指标、取消、恢复、人工确认、agent 档案、经验库、运行枚举、运行视图、叙述摘要与服务启动；无子命令时进入交互式会话。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>解析子命令与参数（仅依赖标准库）</li>
+              <li>转换为对应 HTTP 请求发往 API 网关</li>
+              <li>接收响应并渲染为终端输出</li>
+              <li>无子命令时进入交互式会话</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#0284c7; --lc:#0284c7">
           <div class="card-title"><span class="mk"></span>编程式接口</div>
           <div class="card-fn"><span class="tag">核心功能</span>以库内嵌方式直接驱动编排，供上层程序集成。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>提供同步入口（单次运行）与异步入口（并发运行，运行间状态隔离）；以任务图为输入、以调度报告为输出。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>构造任务图与 agent 注册表</li>
+              <li>选择同步入口（单次运行）或异步入口（并发运行，运行间状态隔离）</li>
+              <li>调度器按拓扑序执行并返回调度报告</li>
+              <li>调用方按报告读取各任务结果</li>
+            </ol>
+          </div>
         </div>
 
       </div>
@@ -238,19 +280,43 @@
         <div class="card" style="--cc:#6d28d9; --lc:#6d28d9">
           <div class="card-title"><span class="mk"></span>任务拆解引擎</div>
           <div class="card-fn"><span class="tag">核心功能</span>将自然语言目标转换为带数据流依赖的子任务图。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>由大模型完成拆解，产出任务图并执行拆解 Schema 校验与修正重试（重试携带失败原因与正确示例）。每个子任务声明 <span class="path">model / budget / timeout</span> 与能力标签 <span class="path">required_capabilities</span>，作为后续分配依据。子任务描述给出目标与结果要求即可——目标与契约范围内的取舍由执行侧裁定，无需穷举偏好或预设决策分支。提示词结构为“固定指令 → 学习层指导块 → 用户目标”。属框架内部大模型调用，不经消息协议。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>装配拆解提示词：固定指令 → 学习层指导块 → 用户目标</li>
+              <li>调用大模型产出子任务与数据流依赖</li>
+              <li>执行拆解 Schema 校验与依赖结构校验（引用合法性、无环、存在交付点）</li>
+              <li>不合规时不重放原提示词，改为携带失败原因与正确示例重试一次</li>
+              <li>校验通过后返回任务图（属框架内部调用，不经消息协议）</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#6d28d9; --lc:#6d28d9">
           <div class="card-title"><span class="mk"></span>依赖分析</div>
           <div class="card-fn"><span class="tag">核心功能</span>任务图的结构视图，纯结构计算、不持有运行时状态。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>覆盖引用合法性、无环检测、拓扑序（并列节点按插入序，保证确定性）、拓扑分层（并行前沿）、最大并行宽度、可达性与反向可达（剪枝判据）与交付点判定；并承担拆解产物的合法性校验。运行时状态归调度层，本模块只读任务图结构。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>由任务图建立邻接表</li>
+              <li>校验引用合法性、检测成环、确认存在交付点</li>
+              <li>计算拓扑序（并列节点按插入序，保证确定性）</li>
+              <li>计算拓扑分层（并行前沿）与最大并行宽度</li>
+              <li>计算可达性与反向可达，供剪枝判据与交付点判定使用</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#6d28d9; --lc:#6d28d9">
           <div class="card-title"><span class="mk"></span>资源统计器</div>
           <div class="card-fn"><span class="tag">核心功能</span>经信息请求采集 agent 的能力、资源与约束声明，形成并维护资源画像。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>注册 agent 实例，采集能力、资源与约束声明并解析入库，单点采集失败相互隔离。刷新采用池级惰性刷新（画像超过生存期即重新采集，画像在生存期内无额外开销）与派发前决策点校验（复核易变的资源与约束维度）；采集受框架侧墙钟上限约束。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>登记 agent 实例（agent 标识、模型、适配器引用）</li>
+              <li>经信息请求采集能力、资源与约束声明</li>
+              <li>解析为结构化声明入库；单点采集失败相互隔离</li>
+              <li>池级惰性刷新：画像超过生存期即重新采集，生存期内无额外开销</li>
+              <li>派发前决策点校验，复核选中 agent 的易变维度（资源、约束）；采集受框架侧墙钟上限约束</li>
+            </ol>
+          </div>
         </div>
 
       </div>
@@ -282,19 +348,45 @@
         <div class="card" style="--cc:#0f766e; --lc:#0f766e">
           <div class="card-title"><span class="mk"></span>资源协调器</div>
           <div class="card-fn"><span class="tag">核心功能</span>为每个任务选定 agent 实例。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>三级分配策略——精确匹配（同模型多实例轮询分流）→ 能力匹配（部分覆盖标记风险）→ 降级（显式记录）；连续失败达阈值后自动摘除该实例。只读取资源画像，不执行采集。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>精确匹配：按任务声明的模型匹配，同模型多实例轮询分流</li>
+              <li>未命中则能力匹配：按能力标签匹配，部分覆盖标记风险</li>
+              <li>仍无匹配则降级至默认通用模型，显式记录不静默接受</li>
+              <li>连续失败达阈值后摘除该实例，不再参与分配</li>
+              <li>全程只读取资源画像，不执行采集</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#0f766e; --lc:#0f766e">
           <div class="card-title"><span class="mk"></span>DAG 调度器（同步 / 异步）</div>
           <div class="card-fn"><span class="tag">核心功能</span>按拓扑序派发任务并将运行推进到终态。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>按拓扑序派发、传递上游结果。异步实现以 asyncio 并发推进（任一任务完成即处理），资源限制由声明转为强制执行：按 agent 的并发上限（信号量）与速率配额（滑动窗口）。单次尝试超过 <span class="path">timeout</span> 由框架强制中断，避免无响应 agent 长期占用并发名额。失败重试 N=2 并指数退避。竞态按“冻结派发 → 取消 → 统一收尾”处理，迟到结果直接丢弃。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>就绪集 = 依赖任务全部成功的任务</li>
+              <li>按拓扑序派发，并向任务传递上游结果</li>
+              <li>异步实现并发推进：任一派发完成即处理，资源限制由声明转为强制执行（并发上限信号量、速率配额滑动窗口）</li>
+              <li>单次尝试超过任务超时即由框架强制中断，产出失败结果汇入重试链路</li>
+              <li>失败重试 2 次并指数退避，耗尽后转入失败处理</li>
+              <li>竞态按「冻结派发 → 取消 → 统一收尾」处理，迟到结果直接丢弃</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#0f766e; --lc:#0f766e">
           <div class="card-title"><span class="mk"></span>失败处理器</div>
           <div class="card-fn"><span class="tag">核心功能</span>重试 → 失败传播 → 失效任务剪除 → 统一收尾反馈。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>该能力跨三层协作，不构成独立模块——剪枝算法属图结构计算，取消下发与派发冻结属调度控制流。剪枝判据为“任务的产出是否仍被最终交付消费”（反向可达）：存活交付点为空则整棵任务图取消。取消为 best-effort，不阻塞收尾。重试为任务级动作，不区分副作用声明；副作用任务的幂等责任归执行侧（由协议模板声明），崩溃恢复路径另按恢复策略拦截。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>任务级重试，不区分副作用声明；副作用任务的幂等责任归执行侧</li>
+              <li>重试耗尽后，按反向可达性计算存活交付点</li>
+              <li>存活交付点为空则整棵任务图剪除</li>
+              <li>对剪枝时仍处于运行中的任务下发取消（best-effort，不阻塞收尾）</li>
+              <li>汇总为调度报告的统一收尾</li>
+              <li>该能力跨三层协作，不构成独立模块：剪枝算法属图结构计算，取消下发与派发冻结属调度控制流</li>
+            </ol>
+          </div>
         </div>
 
       </div>
@@ -330,13 +422,29 @@
         <div class="card" style="--cc:#b45309; --lc:#b45309">
           <div class="card-title"><span class="mk"></span>Agent 适配器</div>
           <div class="card-fn"><span class="tag">核心功能</span>装配协议提示词、调用模型并解析结果契约，是框架与 agent 之间的唯一执行入口。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>完成协议模板装配（完整版 / 简化版，模板内嵌正反示例）；两级校验解析（提取 → 信封与输出结构校验 → 失败自动修正重试一次，与任务重试分离计数）。提供同步与异步两条调用路径，异步默认将同步实现置于线程池，HTTP 形态实现原生异步。从模型 API 响应回填真实用量与耗时。解析组件为框架内最严格的模块。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>装配协议提示词（协议模板全文 + 请求 JSON + 上游输入）；模板分完整版与简化版，内嵌正反示例</li>
+              <li>调用模型：异步默认将同步实现交线程池，HTTP 形态实现原生异步</li>
+              <li>两级校验：提取 JSON → 校验信封与输出结构</li>
+              <li>校验失败携带正确结构自动修正重试一次，与任务级重试分离计数；解析组件为框架内最严格的模块</li>
+              <li>从模型 API 响应回填真实用量与耗时</li>
+              <li>返回结果契约</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#b45309; --lc:#b45309">
           <div class="card-title"><span class="mk"></span>Agent（外部）</div>
           <div class="card-fn"><span class="tag">核心功能</span>接收请求、返回符合结果契约的 JSON，无需为该框架作适配改造。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>唯一强制约束是输出合法 JSON；格式漂移、语义漂移与提示注入等稳定性风险全部由框架侧解析组件收敛，agent 侧无需适配。目标与契约范围内的全部取舍（含价值性取舍）由其自行裁定，框架不设征询通道。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>接收协议提示词请求</li>
+              <li>在目标与契约范围内自行裁定全部取舍（含价值性取舍），框架不设征询通道</li>
+              <li>输出合法 JSON——唯一强制约束</li>
+              <li>返回结果契约；格式漂移、语义漂移与提示注入等风险由框架侧解析组件收敛</li>
+            </ol>
+          </div>
         </div>
 
       </div>
@@ -368,25 +476,56 @@
         <div class="card" style="--cc:#be185d; --lc:#be185d">
           <div class="card-title"><span class="mk"></span>结果审计器</div>
           <div class="card-fn"><span class="tag">核心功能</span>对结果契约与调度事实执行确定性对账。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>覆盖正确性对账（状态与结果契约矛盾、缺失契约、迟到结果）、分配审计（降级与风险）、剪枝审计、语义交叉校验（能力声明、副作用声明与实际结果）与错误模式归集；结论分三级 ok / warning / critical。只读、纯函数、结论可重复（可重放）——审计对象是状态机的自洽性，产出内容的正确性交给反思 / 判定处理，两者分离记录。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>以调度收尾报告为唯一输入，不接收外部运行态</li>
+              <li>正确性对账：任务状态与结果契约矛盾、缺失契约、迟到结果</li>
+              <li>分配审计（降级与风险）与剪枝审计</li>
+              <li>语义交叉校验：能力声明、副作用声明与实际结果</li>
+              <li>错误模式归集；结论分三级 ok / warning / critical</li>
+              <li>全过程只读、纯函数，不写回被审计报告，同一报告重复审计结论逐字节一致</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#be185d; --lc:#be185d">
           <div class="card-title"><span class="mk"></span>反思 / 判定器</div>
           <div class="card-fn"><span class="tag">核心功能</span>以原始目标为唯一基准，判定最终交付是否达成目标（advisory）。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>基准只能是运行级目标 <span class="path">goal</span>（子任务描述是框架自产的拆解产物，用作基准即循环论证），子任务结果仅作证据（含失败与剪枝事实）。判定者优先取注册表中声明 <span class="path">judge</span> 能力的独立 agent（能力经信息请求采集，可为异构模型），无则降级自判并标记 <span class="path">independent=false</span>。判定即一次普通 <span class="path">task_request</span>（不新增消息类型），受输出结构强校验与解析重试约束，调用受墙钟超时约束，超时或异常一律收敛为错误码。advisory：只写报告并供学习层消费，不改变状态、不阻断交付、不自动重派；与审计分离记录，成本单列，判定产物不再被判定。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>选定判定者：优先取注册表中声明判定能力的独立 agent（可为异构模型），无则按允许自判降级并标记非独立，或跳过</li>
+              <li>以运行级目标 <span class="path">goal</span> 为唯一基准，子任务结果仅作证据随附</li>
+              <li>组装为一次普通 <span class="path">task_request</span> 调用，不新增消息类型</li>
+              <li>输出受结构强校验与解析重试约束，调用受墙钟超时约束，超时或异常一律收敛为错误码</li>
+              <li>结论写入报告并供学习层消费；不改变状态、不阻断交付、不自动重派，成本单列，判定产物不再被判定</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#be185d; --lc:#be185d">
           <div class="card-title"><span class="mk"></span>成本核算</div>
           <div class="card-fn"><span class="tag">核心功能</span>按 agent 与分配方式归集成本与 token。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>降级成本单独呈现；失败重试的沉没成本与剪枝已发生成本单独列示；针对 agent 声明的预算上限执行超支判定（预算声明为 0 时不判定）。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>按 agent 与分配方式归集成本与 token</li>
+              <li>降级成本单独列示</li>
+              <li>失败重试的沉没成本与剪枝已发生成本单独列示</li>
+              <li>对照 agent 声明的预算上限执行超支判定（预算为 0 时不判定）</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#be185d; --lc:#be185d">
           <div class="card-title"><span class="mk"></span>可观测性</div>
           <div class="card-fn"><span class="tag">核心功能</span>按运行隔离的指标聚合与结构化日志。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>指标含成功率、耗时、峰值并发与降级数，直接供审计与学习消费；日志覆盖请求、响应、解析与取消全链路。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>采集运行事件</li>
+              <li>按运行标识隔离聚合指标：成功率、耗时、峰值并发、降级数</li>
+              <li>以 key=value 结构化格式记录请求、响应、解析与取消全链路日志</li>
+              <li>指标直接供审计与学习层消费</li>
+            </ol>
+          </div>
         </div>
 
       </div>
@@ -418,19 +557,40 @@
         <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">
           <div class="card-title"><span class="mk"></span>复盘与规则提取</div>
           <div class="card-fn"><span class="tag">核心功能</span>运行收尾时对同一份报告执行只读复盘，产出分级的规则结论与动作建议。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>规则覆盖 REC-1（缺契约 / 状态矛盾，指向框架自身的契约链路缺口）、FP（同错误码频发，建议更换 agent）、DEG-1（降级占比高，核对拆解建议）、CAP-1（风险分配失败率高，重新采集能力）、BUG（实花超预算）、PRU-1（剪枝，复盘并行度）、INT-1（崩溃中断待人工）与 JUD-1 / JUD-2（目标未达成 / 判定未产出结论）。规则带证据强度分级：<span class="path">objective</span>（确定性事实，只读、结论可重放）与 <span class="path">judgment</span>（大模型判定，非确定有成本），禁止同级呈现。复盘为只读动作，异常一律隔离，不阻断运行收尾。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>运行收尾时读取同一份报告（审计对账 + 成本归集 + 判定结论）</li>
+              <li>逐条按阈值判定生成规则：REC-1（缺契约、状态矛盾）、FP（同错误码频发）、DEG-1（降级占比高）、CAP-1（风险分配失败率高）、BUG（实花超预算）、PRU-1（剪枝）、INT-1（中断待人工）、JUD-1/JUD-2（目标未达成、判定无结论）</li>
+              <li>按证据强度分级：<span class="path">objective</span>（确定性事实，可重放）与 <span class="path">judgment</span>（大模型判定，非确定有成本），禁止同级呈现</li>
+              <li>异常一律隔离，不阻断运行收尾</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">
           <div class="card-title"><span class="mk"></span>经验库</div>
           <div class="card-fn"><span class="tag">核心功能</span>将规则落盘并聚合为跨运行摘要，作为后续任务的数据基础。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>规则落盘为经验库表（同一运行重新执行幂等），按规则标识聚合命中次数、贡献运行数、最高严重度与最近证据——单次运行内的阈值统计意义有限，跨运行复现构成客观依据。对外接口为 <span class="path">GET /api/lessons</span> 与 <span class="path">ao lessons</span>。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>规则按运行标识与规则标识幂等落盘；同一运行重新执行不重复计入</li>
+              <li>按规则标识聚合：命中次数、贡献运行数、最高严重度、最近证据</li>
+              <li>单次运行内的阈值统计意义有限，跨运行复现构成客观依据</li>
+              <li>经接口对外提供（<span class="path">GET /api/lessons</span> 与 <span class="path">ao lessons</span>）</li>
+            </ol>
+          </div>
         </div>
 
         <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">
           <div class="card-title"><span class="mk"></span>提示词顾问</div>
           <div class="card-fn"><span class="tag">核心功能</span>生成注入拆解提示词的指导块，是学习闭环的输出端。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>指导块含三部分——① 注册表实测事实（当前可用模型、已注册能力标签，无需阈值门槛，可在拆解阶段即规避降级与能力风险）；② 达复现门槛的客观规则（<span class="path">min_occurrences</span> 默认 2，每条恒附带“既往 N 次运行命中 M 次”的数值依据与建议动作，条数受限、超长截断）；③ 判定结论单独成节并显式标注非确定来源，客观与判定禁止同级呈现。指导块缺失、空串或异常一律退化为不注入，学习层故障不影响拆解。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>读取注册表实测事实：当前可用模型、已注册能力标签（无需阈值门槛）</li>
+              <li>读取达到复现门槛的客观规则（<span class="path">min_occurrences</span> 默认 2），每条恒附「既往 N 次运行命中 M 次」的数值依据与建议动作，条数受限、超长截断</li>
+              <li>判定结论单独成节并显式标注非确定来源，客观与判定禁止同级呈现</li>
+              <li>生成指导块注入拆解提示词；指导块缺失、空串或异常一律退化为不注入，学习层故障不影响拆解</li>
+            </ol>
+          </div>
         </div>
 
       </div>
@@ -461,7 +621,15 @@
         <div class="card" style="--cc:#475569; --lc:#475569">
           <div class="card-title"><span class="mk"></span>状态存储 / 运行存档</div>
           <div class="card-fn"><span class="tag">核心功能</span>单次运行的不可变存档，是框架的唯一权威来源。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>由过程事件流（状态变更逐条落盘，可精确回放）与终态报告（治理与学习产物附载）构成，事件驱动写入使崩溃时数据完整度最高、数据丢失窗口趋近于零。支持报告读回与运行枚举，跨进程重启后仍可查询与恢复。崩溃恢复据此执行：无副作用任务自动重派，声明副作用的任务置为待人工确认。经验库与叙述摘要为该存储的可选能力，实现未支持时退化为无相应记忆。</div>
+          <div class="card-flow"><span class="tag">工作流程</span>
+            <ol>
+              <li>调度状态变更（启动、派发、完成、失败、取消、剪枝）逐条写入过程事件流，事件驱动写入使数据丢失窗口趋近于零</li>
+              <li>运行收尾写入终态报告，治理与学习产物附载其中</li>
+              <li>支持报告读回与运行枚举，跨进程重启后仍可查询</li>
+              <li>崩溃恢复：读回存档，其中无副作用任务自动重派，声明副作用的任务置为待人工确认</li>
+              <li>经验库与叙述摘要为本存储的可选能力，未实现时各自退化为无相应记忆</li>
+            </ol>
+          </div>
         </div>
       </div>
     </section>
@@ -483,7 +651,7 @@
 </main>
 
 <footer>
-  <b>Agents Orchestration</b> · 架构 v2.6 · 2026-09-24 · 六层功能架构 + 持久化底座 · 481/481 测试通过
+  <b>Agents Orchestration</b> · 架构总览 v2.7 · 2026-09-28 · 六层功能架构 + 持久化底座 · 481/481 测试通过
   <br>目标 → 拆解 → 依赖分析 → 资源协调 → 并发调度 → 治理判定 → 学习闭环 → 运行存档 → 崩溃恢复
 </footer>
 
