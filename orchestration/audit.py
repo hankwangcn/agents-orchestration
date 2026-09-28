@@ -4,7 +4,7 @@
 输出：AuditReport——正确性对账 / 分配审计 / 剪枝审计 / 语义交叉校验 / 错误模式归集。
 
 审计为引用透明的纯函数：只对账事实，无副作用，结论可重复、可重放。
-同时产出喂给自我学习（learning.py）的原始素材。
+同时产出供自我学习消费（learning.py）的原始素材。
 """
 from __future__ import annotations
 
@@ -29,13 +29,13 @@ class AuditReport(BaseModel):
     status_result_mismatches: list[dict] = Field(default_factory=list)
     """状态与 result.success 矛盾（如 status=success 但 result.success=false）。"""
     missing_results: list[str] = Field(default_factory=list)
-    """SUCCESS/FAILED 终态但缺 result（硬性断链，协议 §4.2：无契约框架断链）。"""
+    """SUCCESS/FAILED 终态但缺 result（结构性链路中断，协议 §4.2：无契约框架链路中断）。"""
     late_results: list[str] = Field(default_factory=list)
     """已取消但带 result（晚到结果，调度器应丢弃——此处标记暴露）。"""
     interrupted_tasks: list[dict] = Field(default_factory=list)
     """断点恢复时置 INTERRUPTED 的任务（副作用任务不自动重派，待人工确认）。"""
 
-    # -- 分配审计（阶段三留痕消费）--
+    # -- 分配审计（阶段三记录消费）--
     assignments_by_type: dict[str, int] = Field(default_factory=dict)
     degraded_tasks: list[dict] = Field(default_factory=list)
     """降级明细：task/model → 降级到谁，为什么。"""
@@ -47,14 +47,14 @@ class AuditReport(BaseModel):
     pruned_task_count: int = 0
     pruned_final_events: int = 0
     root_failures: list[dict] = Field(default_factory=list)
-    """失败根因列表（喂自我学习）。"""
+    """失败根因列表（供自我学习消费）。"""
 
     # -- 语义交叉校验（消息协议 §7.5）--
     side_effect_mismatches: list[dict] = Field(default_factory=list)
     """声明 side_effects vs 实际 side_effect_report 不一致。"""
     capability_risks: list[dict] = Field(default_factory=list)
 
-    # -- 错误模式归集（喂自我学习）--
+    # -- 错误模式归集（供自我学习消费）--
     error_patterns: list[dict] = Field(default_factory=list)
     """[{code, count, task_ids}] 按频率降序。"""
 
@@ -140,7 +140,7 @@ class Auditor:
         assignments: list[Assignment],
         dag,
     ) -> None:
-        """分配留痕汇总：降级 / 风险明细（风险项合并执行结果）。"""
+        """分配记录汇总：降级 / 风险明细（风险项合并执行结果）。"""
         by_type: dict[str, int] = {}
         for a in assignments:
             by_type[a.match_type] = by_type.get(a.match_type, 0) + 1
@@ -171,7 +171,7 @@ class Auditor:
         """语义交叉校验（协议 §7.5）：side_effects 声明 vs side_effect_report。
 
         - 声明 none 但报告了副作用 → 隐藏副作用，硬问题（剪枝/审计可能误判）
-        - 声明有副作用但未报告 → 无法对账，也标记（审计看不到副作用落地）
+        - 声明有副作用但未报告 → 无法对账，也标记（审计看不到副作用实际发生）
         """
         for tid, task in dag.tasks.items():
             res = task.result
@@ -191,7 +191,7 @@ class Auditor:
                 })
 
     def _collect_error_patterns(self, out: AuditReport, dag) -> None:
-        """失败任务错误码归集（喂自我学习：什么错最常发生）。"""
+        """失败任务错误码归集（供自我学习消费：什么错最常发生）。"""
         counter: dict[str, dict] = {}
         for tid, task in dag.tasks.items():
             if task.status != TaskStatus.FAILED or task.result is None:
@@ -206,7 +206,7 @@ class Auditor:
         )
 
     def _finalize(self, out: AuditReport) -> None:
-        """汇总判定：硬性问题（断链/矛盾）→ critical；软性问题 → warning。"""
+        """汇总判定：严重问题（链路中断/矛盾）→ critical；一般问题 → warning。"""
         if out.missing_results or out.status_result_mismatches:
             out.verdict = "critical"
             out.issues.append(

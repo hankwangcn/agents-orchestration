@@ -162,7 +162,7 @@ class TestPrune:
         """并行任务已成功，但最终被剪 → 状态 CANCELLED，产出作废（§5.4 成本照记）。"""
         dag = dag_of(("a", []), ("b", ["a"]), ("c", ["a"]), ("d", ["b", "c"]))
         dag.tasks["a"].status = TaskStatus.SUCCESS
-        dag.tasks["c"].status = TaskStatus.SUCCESS  # 已跑完
+        dag.tasks["c"].status = TaskStatus.SUCCESS  # 已执行完毕
         dag.tasks["b"].status = TaskStatus.FAILED
         dag.tasks["b"].result = Result(task_id="b", success=False, error=ErrorInfo(code="x"))
 
@@ -229,7 +229,7 @@ class TestSchedulerRun:
         assert report.total_cost == 0.02
 
     def test_branch_failure_keeps_independent_branch(self):
-        """双分支：B 分支失败剪枝，C→E 分支照常完成 → partial。"""
+        """双分支：B 分支失败剪枝，C→E 分支正常完成 → partial。"""
         dag = dag_of(("a", []), ("b", ["a"]), ("c", ["a"]), ("d", ["b"]), ("e", ["c"]))
         adapter = ScriptedAdapter({
             "a": [ok("a")],
@@ -271,7 +271,7 @@ class TestSchedulerRun:
 
 
 # ---------------------------------------------------------------------------
-# 阶段三：任务分配 × 调度器集成（留痕 / 降级 / 摘除联动）
+# 阶段三：任务分配 × 调度器集成（记录 / 降级 / 摘除联动）
 # ---------------------------------------------------------------------------
 
 class TestSchedulerAssignments:
@@ -287,7 +287,7 @@ class TestSchedulerAssignments:
         assert report.assignments[0].agent_id == "agent_001"
 
     def test_degraded_assignment_recorded(self):
-        """task.model 未注册 → 降级默认通用 LLM → 留痕 degraded。"""
+        """task.model 未注册 → 降级默认通用 LLM → 记录 degraded。"""
         dag = DAG(tasks={
             "a": Task(
                 id="a", desc="a",
@@ -325,7 +325,7 @@ class TestSchedulerAssignments:
         assert a.risk is False
 
     def test_exact_but_uncovered_capability_marks_risk(self):
-        """精确 model 但能力声明未覆盖需求 → risk=True 留痕。"""
+        """精确 model 但能力声明未覆盖需求 → risk=True 记录。"""
         dag = DAG(tasks={
             "a": Task(
                 id="a", desc="a",
@@ -372,7 +372,7 @@ class TestSchedulerAssignments:
 
 
 class BlockingAdapter(AgentAdapter):
-    """同步阻塞 adapter：模拟挂死的 agent（sleep 远长于任务声明的 timeout）。"""
+    """同步阻塞 adapter：模拟无响应的 agent（sleep 远长于任务声明的 timeout）。"""
 
     def __init__(self, block: float, model: str = "deepseek-chat"):
         super().__init__(model=model)
@@ -389,7 +389,7 @@ class BlockingAdapter(AgentAdapter):
 
 
 class TestFrameworkTimeout:
-    """#34（同步路径）：框架侧 wall-clock 超时封顶挂死的 agent 调用。"""
+    """#34（同步路径）：框架侧 wall-clock 超时上限终止无响应的 agent 调用。"""
 
     def test_hanging_task_times_out(self):
         dag = DAG(tasks={"a": Task(

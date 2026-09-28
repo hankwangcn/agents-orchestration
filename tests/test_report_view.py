@@ -46,7 +46,7 @@ _REPORT = {
         {"task_id": "a", "agent_id": "bot", "match_type": "exact",
          "risk": False, "reason": ""},
         {"task_id": "b", "agent_id": "bot2", "match_type": "degraded",
-         "risk": True, "reason": "降级兜底"},
+         "risk": True, "reason": "降级回退"},
     ],
     "reflection": {"enabled": True, "achieved": False, "score": 0.3,
                    "reasons": ["缺最终报告"], "gaps": ["最终报告"],

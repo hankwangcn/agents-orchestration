@@ -1,7 +1,7 @@
 """经验库与提示词顾问（架构 §3.2 学习层闭环）。
 
-学习层此前"能跑但没人调、算完即扔"：规则提取成立，但既不落盘也无消费方
-（§3.2 承诺的"规则库/经验库"零实现）。本模块补齐闭环的两端：
+学习层此前"调用方缺失"：规则提取成立，但既不落盘也无消费方
+（§3.2 承诺的"规则库/经验库"未实现）。本模块补齐闭环的两端：
 
 **① 经验库（跨 run 记忆）**
 `Lesson` = 单条规则在**跨 run**尺度上的聚合视图：命中次数、贡献 run 数、最高
@@ -9,7 +9,7 @@ severity、最近一次的证据。`build_digest()` 把 StateStore 里累积的�
 `LessonDigest`——单 run 内 `failure_pattern_min=2` 意义有限，跨 run 复现才是
 "客观支撑"。落盘由 StateStore（`learning_lessons` 表）负责。
 
-**② 消费方 = 拆解提示词（闭环出口）**
+**② 消费方 = 拆解提示词（闭环回馈点）**
 `PromptAdvisor.guidance()` 产出一段**可追溯、有数值、有上限**的提示词指导块，
 注入拆解引擎（`decomposer.Decomposer(guidance_provider=...)`）：
 
@@ -23,7 +23,7 @@ severity、最近一次的证据。`build_digest()` 把 StateStore 里累积的�
 
 红线：本模块**只读**——不采集、不改状态、不阻断；提示词指导是 advisory，
 拆解引擎照旧受 Schema 七关校验约束。生成失败一律退化为"无指导块"，
-绝不把拆解链路拖垮。
+绝不把拆解链路影响。
 """
 from __future__ import annotations
 
@@ -156,16 +156,16 @@ def build_digest(rows: Iterable[dict]) -> LessonDigest:
 
 
 class PromptAdvisor:
-    """把经验库 + 注册表事实转成拆解提示词的指导块（学习层闭环出口）。
+    """把经验库 + 注册表事实转换为拆解提示词的指导块（学习层闭环回馈点）。
 
     min_occurrences：规则进入提示词所需的**跨 run 复现**次数（默认 2）——
     "客观支撑"即复现证据，单次偶发不写成指导。
-    max_items：指导块条数上限（提示词要控规模，不能把经验库全文塞进去）。
+    max_items：指导块条数上限（提示词要控规模，不得全文注入经验库）。
     include_judgment：是否附上判定结论（非确定来源，单独成节并标注）。
     """
 
     OBJECTIVE_HEADER = "【历史经验（学习层自动生成，来自既往运行的事实统计）】"
-    JUDGMENT_HEADER = "【判定结论（非确定来源，仅供参考，不要当作硬性验收标准）】"
+    JUDGMENT_HEADER = "【判定结论（非确定来源，仅供参考，不要当作强制性验收标准）】"
 
     def __init__(
         self,
@@ -233,14 +233,14 @@ class PromptAdvisor:
             return ""
         blocks.append(
             "以上是既往运行的事实统计与注册表现状，用于避免重复返工；"
-            "它们不改变下面的输出格式与硬性要求。"
+            "它们不改变下面的输出格式与强制性要求。"
         )
         return "\n\n".join(blocks)
 
     # ------------------------------------------------------------------
 
     def _lesson_lines(self, tier: str) -> list[str]:
-        """按复现门槛与条数上限，取该 tier 的规则转成提示词条目。"""
+        """按复现门槛与条数上限，取该 tier 的规则转换为提示词条目。"""
         digest = self.digest()
         picked = [
             ls for ls in digest.lessons

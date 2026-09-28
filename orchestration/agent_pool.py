@@ -5,12 +5,12 @@
 - 能力 / 资源 / 约束声明通过 info_request 采集（协议 §4.2 scope=
   capability/resource/constraint），解析为结构化声明入库，可刷新
 - 刷新策略 = **TTL 惰性刷新 + 决策点校验**：池级 `ensure_fresh()` 读时过期
-  即刷（仅对过期 agent 重采，新鲜零开销）；决策点 `validate_before_dispatch()`
+  即刷（仅对过期 agent 重采，未过期无开销）；决策点 `validate_before_dispatch()`
   在派发前对选中 agent 复核易变维度（resource/constraint）
 - 采集受**框架侧 wall-clock 上限**约束（`info_timeout_seconds`，与任务执行 #34
-  对称）：采集卡死不能无封顶地拖住调用方，超时按单点失败处理、保留上次画像
+  对称）：采集无响应不能无上限地阻塞调用方，超时按单点失败处理、保留上次画像
 
-**层职责边界**：本模块只做"把池的画像弄准、给出去"（注册 / 采集 / 声明解析
+**层职责边界**：本模块只做"把池的画像采集准确并对外提供"（注册 / 采集 / 声明解析
 / 刷新 / 画像查询）。**任务分配与故障摘除不在此**——那是调度层「资源协调器」
 的职责（`allocator.Allocator`）。二者由 `registry.AgentRegistry` 组合成门面。
 """
@@ -96,7 +96,7 @@ def _looks_like_time_window(tag: str) -> bool:
 
     时间窗字段（原 `time_windows`）已废弃——采集但无消费方，故删除。
     此判定仅用于把误入 constraint q1 的时间窗文本从 forbidden 中剔除，
-    避免污染约束匹配/审计/学习规则的输入口径。
+    避免污染约束匹配/审计/学习规则的输入范围。
     """
     t = (tag or "").lower()
     return "~" in t or "点" in t or "window" in t or "时间窗" in t
@@ -143,8 +143,8 @@ class AgentPool:
         self._default_id: Optional[str] = None
         self.collect_ttl_seconds = collect_ttl_seconds
         self.validate_on_dispatch = validate_on_dispatch
-        # 框架侧 wall-clock 上限（与任务执行 #34 对称）：采集同样会卡死，
-        # 不能无封顶地拖住调用方（run 起始的池级刷新 / 派发前的决策点校验）。
+        # 框架侧 wall-clock 上限（与任务执行 #34 对称）：采集同样会无响应，
+        # 不能无上限地阻塞调用方（run 起始的池级刷新 / 派发前的决策点校验）。
         # <=0 表示不设超时。
         self.info_timeout_seconds = info_timeout_seconds
 
@@ -203,7 +203,7 @@ class AgentPool:
         """对单个 agent 发一次 info_request 并解析入库。
 
         采集受框架侧 wall-clock 上限约束（info_timeout_seconds）——与任务执行
-        #34 对称：采集卡死同样不能无封顶地拖住调用方；超时按单点失败处理。
+        #34 对称：采集无响应同样不能无上限地阻塞调用方；超时按单点失败处理。
         """
         request_id = f"info:{agent.agent_id}:{scope}:{_ts()}"
         timeout = self.info_timeout_seconds
@@ -301,7 +301,7 @@ class AgentPool:
         return (time.time() - ts) >= self.collect_ttl_seconds
 
     def ensure_fresh(self, agent_id: Optional[str] = None) -> list[dict]:
-        """池级 TTL 惰性刷新：仅对过期 agent 重新采集（新鲜则零网络开销）。
+        """池级 TTL 惰性刷新：仅对过期 agent 重新采集（未过期则无网络开销）。
 
         在"读"数据时调用（如池级匹配前），保证三级分配看到的池级画像不陈旧。
         """
@@ -355,14 +355,14 @@ class AgentPool:
     ) -> None:
         """把 info 响应的 output 解析为结构化字段（容错：宽松解析）。
 
-        注册记录口径（对话裁定）：**agent / 能力 / 限制（功能 + 性能）**——
+        注册记录定义（对话裁定）：**agent / 能力 / 限制（功能 + 性能）**——
         capability → 能力；resource → 性能限制（并发/限速/预算）；constraint
         → 功能限制（forbidden / languages）。合规限制归后期安全层，本轮不做。
         """
         if isinstance(output, dict):
             answers = output
         elif isinstance(output, str):
-            answers = {"q1": output}  # 兜底：整段当能力描述
+            answers = {"q1": output}  # 退化处理：整段当能力描述
         else:
             answers = {}
 
@@ -381,7 +381,7 @@ class AgentPool:
             # q1 为自由文本（如"禁止访问外网；输出必须是JSON"）：逐标签入库；
             # "无"（含空白变体）与空回答不计入。时间窗字段已废弃（无消费方，
             # 见 _looks_like_time_window），误入的时间窗文本在此剔除——forbidden
-            # 是约束匹配/审计/学习规则的输入，混入时间窗会污染判定口径
+            # 是约束匹配/审计/学习规则的输入，混入时间窗会污染判定基准
             agent.forbidden = [
                 t for t in _split_tags(q(1))
                 if t != "无" and not _looks_like_time_window(t)

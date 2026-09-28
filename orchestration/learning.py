@@ -5,12 +5,12 @@ ReflectionReport（治理层反思/判定结论——目标是否达成）。
 输出：LearningReport——启发式规则提取（失败模式 / 降级 / 风险分配 / 预算超支 /
 剪枝质量 / 目标达成度）。
 
-定位：把审计数字与判定结论转成"可执行的拆解/分配优化建议"，规则带证据与
-动作建议，经经验库（lessons.py）落盘并回馈拆解提示词——闭环出口。
+定位：把审计数字与判定结论转换为"可执行的拆解/分配优化建议"，规则带证据与
+动作建议，经经验库（lessons.py）落盘并回馈拆解提示词——闭环回馈点。
 
 **证据强度分级（客观性分层）**：规则按来源分两级，禁止同级呈现——
-- ``objective``：确定性事实（审计对账 / 分配留痕 / 成本核算 / 剪枝统计），
-  只读、纯函数、结论可重复；**只有这一级可以作为提示词的硬性指导**；
+- ``objective``：确定性事实（审计对账 / 分配记录 / 成本核算 / 剪枝统计），
+  只读、纯函数、结论可重复；**只有这一级可以作为提示词的权威性指导**；
 - ``judgment``：LLM 判定结论（JUD-*），非确定、有成本、不可重放；只作
   参考随附，不得伪装成事实。
 
@@ -26,9 +26,9 @@ from .audit import AuditReport
 from .cost import CostReport
 from .reflection import ReflectionReport
 
-# 客观（确定性）来源的规则类别：审计事实对账 / 分配留痕 / 成本核算
+# 客观（确定性）来源的规则类别：审计事实对账 / 分配记录 / 成本核算
 OBJECTIVE_CATEGORIES: frozenset[str] = frozenset({
-    "reconciliation",       # REC-1 / INT-1：框架自身断链、崩溃点副作用
+    "reconciliation",       # REC-1 / INT-1：框架自身链路中断、崩溃点副作用
     "failure_pattern",      # FP-*：错误码频次
     "degraded_assignment",  # DEG-1：降级占比
     "capability_risk",      # CAP-1：风险分配失败率
@@ -59,7 +59,7 @@ class LearningRule(BaseModel):
     message: str
     evidence: dict = Field(default_factory=dict)
     action: str = ""
-    """建议动作（喂拆解优化/分配调整）。"""
+    """建议动作（供拆解优化与分配调整消费）。"""
 
     @property
     def objective(self) -> bool:
@@ -113,7 +113,7 @@ class LearningEngine:
     # ------------------------------------------------------------------
 
     def _learn_reconciliation(self, out: LearningReport, audit: AuditReport) -> None:
-        """正确性硬问题：断链/矛盾——优先级最高，先暴露再谈优化。"""
+        """正确性严重问题：链路中断/矛盾——优先级最高，先暴露再谈优化。"""
         if audit.missing_results or audit.status_result_mismatches:
             out.add(LearningRule(
                 rule_id="REC-1",
@@ -127,11 +127,11 @@ class LearningEngine:
                     "missing": audit.missing_results,
                     "mismatches": audit.status_result_mismatches,
                 },
-                action="检查 validation.py 解析兜底与适配器模板装配",
+                action="检查 validation.py 解析容错与适配器模板装配",
             ))
 
     def _learn_failure_patterns(self, out: LearningReport, audit: AuditReport) -> None:
-        """高频错误码 → 沉淀"避免该失败"的拆解规则。"""
+        """高频错误码 → 形成"避免该失败"的拆解规则。"""
         for pat in audit.error_patterns:
             if pat["count"] < self.failure_pattern_min:
                 continue
@@ -265,7 +265,7 @@ class LearningEngine:
         """治理层判定结论 → 目标达成度规则（advisory，不改状态）。
 
         - JUD-1：判定认为**目标未达成**——最上位的信号（过程全绿但交付没达
-          成目标，是拆解口径问题，不是执行问题）
+          成目标，是拆解粒度问题，不是执行问题）
         - JUD-2：判定了但没拿到结论（判定链路故障 / 超时）——低优先级，
           只提示判定能力本身需要修
         """

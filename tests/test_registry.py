@@ -175,7 +175,7 @@ class TestCollect:
             assert reg.get(aid).forbidden == []
 
     def test_collect_failure_is_isolated(self):
-        """单 scope 采集失败不中断，摘要留痕。"""
+        """单 scope 采集失败不中断，摘要记录。"""
         reg = AgentRegistry()
         adapter = InfoAdapter(declarations=DECL)
         adapter.fail_scopes.add("resource")
@@ -201,7 +201,7 @@ class TestCollect:
         assert "capability" in request_id
 
     def test_output_string_fallback(self):
-        """output 是裸字符串 → 整段当能力描述兜底。"""
+        """output 是纯字符串 → 整段当能力描述回退。"""
         reg = AgentRegistry()
         adapter = InfoAdapter(declarations={"capability": "翻译, 校对"})
         aid = reg.register(adapter)
@@ -215,7 +215,7 @@ class TestCollect:
 
 class TestRefresh:
     def test_ensure_fresh_skips_fresh_agent(self):
-        """刚采集过 → TTL 内 → 池级刷新零网络开销。"""
+        """刚采集过 → TTL 内 → 池级刷新无网络开销。"""
         reg = AgentRegistry()
         adapter = InfoAdapter(declarations=DECL)
         aid = reg.register(adapter)
@@ -328,7 +328,7 @@ class TestAssign:
         assert "部分覆盖" in assignment.reason
 
     def test_degrade_to_default_with_trace(self):
-        """无匹配 → 降级默认通用 LLM，显式留痕（degraded）。"""
+        """无匹配 → 降级默认通用 LLM，显式记录（degraded）。"""
         reg = AgentRegistry()
         reg.register(InfoAdapter(model="claude-3.5"), agent_id="claude")
         reg.register(InfoAdapter(model="deepseek-chat"), agent_id="general")
@@ -439,7 +439,7 @@ class TestHealth:
 # ---------------------------------------------------------------------------
 
 class MiniAdapter(AgentAdapter):
-    """极简进程内 adapter：from_config 测试用（避免 HTTP/API key 依赖）。"""
+    """极简进程内 adapter：from_config 测试用（避不经 HTTP/API key 依赖）。"""
 
     def __init__(self, model: str = "deepseek-chat"):
         super().__init__(model=model)
@@ -554,7 +554,7 @@ class TestFromConfig:
             AgentRegistry.from_config(str(tmp_path / "agents.txt"))
 
     def test_missing_yaml_dep(self, tmp_path, monkeypatch):
-        """无 pyyaml 时给出可操作报错（不裸 ImportError）。"""
+        """无 pyyaml 时给出可操作的错误信息（不直接抛出原始 ImportError）。"""
         import builtins
         real_import = builtins.__import__
 
@@ -575,7 +575,7 @@ class TestFromConfig:
 # ---------------------------------------------------------------------------
 
 class TestLayerSplit:
-    """registry 按六层架构切成两半，AgentRegistry 仅作零逻辑门面。
+    """registry 按六层架构切成两半，AgentRegistry 仅作仅转发的门面。
 
     - 规划层「资源统计器」= AgentPool：注册 / 采集 / 声明 / 刷新 / 画像
     - 调度层「资源协调器」= Allocator：三级分配 / 轮询 / 摘除
@@ -627,7 +627,7 @@ class TestLayerSplit:
         assert adapter is reg.pool.get_adapter("a1")
 
     def test_failure_removal_is_allocator_state(self):
-        """摘除写的是池里同一个档案对象（层内共享，非拷贝）。"""
+        """摘除写的是池里同一个档案对象（层内共享，非副本）。"""
         reg = AgentRegistry(max_consecutive_failures=1)
         reg.register(InfoAdapter(), agent_id="a1")
         reg.record_failure("a1")
@@ -673,7 +673,7 @@ class TestLayerSplit:
 # ---------------------------------------------------------------------------
 
 class SlowInfoAdapter(InfoAdapter):
-    """run_info 卡死（sleep）——验证采集受框架侧 wall-clock 上限约束。"""
+    """run_info 无响应（sleep）——验证采集受框架侧 wall-clock 上限约束。"""
 
     def __init__(self, delay: float = 0.5, **kw):
         super().__init__(**kw)
@@ -693,7 +693,7 @@ class SlowAsyncInfoAdapter(SlowInfoAdapter):
 
 
 class ToggleInfoAdapter(InfoAdapter):
-    """先正常应答；置 slow=True 后卡死——验证超时保留上次已知画像。"""
+    """先正常应答；置 slow=True 后无响应——验证超时保留上次已知画像。"""
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -708,7 +708,7 @@ class ToggleInfoAdapter(InfoAdapter):
 
 class TestInfoTimeout:
     def test_sync_collect_bounded(self):
-        """采集卡死 → 到点即返（不再无封顶拖住调用方）。"""
+        """采集无响应 → 到点即返（不再无上限阻塞调用方）。"""
         reg = AgentRegistry(info_timeout_seconds=0.05)
         reg.register(SlowInfoAdapter(delay=0.5, declarations=DECL), agent_id="slow")
         t0 = time.monotonic()

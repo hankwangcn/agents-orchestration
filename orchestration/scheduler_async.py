@@ -13,7 +13,7 @@
   CANCELLED、RUNNING 下发取消、等待收尾），final_status=cancelled
 - **框架侧 wall-clock 超时**：单次执行超过 task.required_resources.timeout
   即 `asyncio.wait_for` 中断（内层协程取消 → 并发槽随 `async with sem`
-  释放，agent 挂死不再永久占住调度资源），产出 error.code=timeout 的
+  释放，agent 无响应不再永久占住调度资源），产出 error.code=timeout 的
   失败 Result，汇入既有重试/剪枝链路
 - **可观测性**：结构化日志 + MetricsCollector（按 run_id 隔离，
   同一实例可并发运行多个 run——RunManager 场景，状态全部在 _RunCtx 内）
@@ -96,7 +96,7 @@ class _RateLimiter:
 class AsyncScheduler:
     """异步并发调度器：事件驱动 + 竞态处理 + 资源限制执行。
 
-    与同步 Scheduler 同构（复用 DAG 剪枝算法、Assignment 留痕），
+    与同步 Scheduler 同构（复用 DAG 剪枝算法、Assignment 记录），
     但派发/等待/取消全部异步化。
     """
 
@@ -135,7 +135,7 @@ class AsyncScheduler:
 
         seed：断点恢复（resume_run）注入的既有状态——
         {assignments, prune_reports, results}，恢复后已完成任务的
-        分配/剪枝/成本记录直接复用，不重跑不重计费。
+        分配/剪枝/成本记录直接复用，不重新执行、不重复计费。
         """
         ctx = _RunCtx(dag=dag, run_id=run_id)
         if seed:
@@ -144,7 +144,7 @@ class AsyncScheduler:
             ctx.results = dict(seed.get("results") or {})
         self._live[run_id] = ctx
         try:
-            # 池级 TTL 刷新：run 开始前把过期画像刷一遍（新鲜则零开销），
+            # 池级 TTL 刷新：run 开始前把过期画像刷一遍（未过期则无开销），
             # 保证三级分配基于的池级数据不陈旧
             await self._registry.aensure_fresh()
             return await self._run_loop(ctx, dag, cancel_event)
@@ -224,7 +224,7 @@ class AsyncScheduler:
             )
             for tid in [t for t in pending if pending[t] in done]:
                 coro = pending.pop(tid)
-                result = coro.result()  # 异常已在执行内部兜底为失败 Result
+                result = coro.result()  # 异常已在执行内部回退为失败 Result
                 task = dag.tasks[tid]
                 if task.status in (TaskStatus.CANCELLED, TaskStatus.SKIPPED):
                     # 晚到结果直接丢弃（§5.3）：不写 result、不计健康度
@@ -237,7 +237,7 @@ class AsyncScheduler:
                 assignment = ctx.assignments[tid]
                 self._finish_task(ctx, tid, result, assignment)
                 if not result.success:
-                    # 失败传播 + 死任务剪枝 → 冻结 → 逐级取消 → 收尾
+                    # 失败传播 + 失效任务剪枝 → 冻结 → 逐级取消 → 收尾
                     frozen = True
                     report = dag.prune_after_failure(tid)
                     ctx.prune_reports.append(report)
@@ -316,7 +316,7 @@ class AsyncScheduler:
 
         日志与归档共用**同一处调用点、同一套事件名**——避免两套事件词汇表
         分叉。存储未启用或未实现事件流时仅记日志（过程不可回放，收尾不受
-        影响）。事件是过程时序的唯一真源（人读时间线由它投影而来）。
+        影响）。事件是过程时序的唯一权威来源（人读时间线由它投影而来）。
         """
         fields: dict[str, object] = dict(data)
         if task_id:
@@ -341,7 +341,7 @@ class AsyncScheduler:
         - RUNNING + 声明副作用 → 置 INTERRUPTED 不重派（副作用执行两次
           不可逆），等人工 resolve（complete/cancel/retry）
         - 已终态（SUCCESS/FAILED/CANCELLED/SKIPPED/INTERRUPTED）→ 保留，
-          结果/成本/审计记录复用，不重跑不重计费
+          结果/成本/审计记录复用，不重新执行、不重复计费
         """
         if self._store is None:
             raise RuntimeError("断点恢复需要 state_store（AsyncScheduler 构造时传入）")
@@ -469,7 +469,7 @@ class AsyncScheduler:
             timeout = task.required_resources.timeout
             try:
                 call = adapter.arun_task(task, request_id=request_id, inputs=inputs)
-                # 框架侧 wall-clock 超时：给"槽被挂死任务占住"封顶。
+                # 框架侧 wall-clock 超时：为"槽被无响应任务占住"设置上限。
                 # 超时的不是声明给 agent 看的建议值，而是框架强制——
                 # asyncio.wait_for 取消内层协程（槽随 async with sem 释放），
                 # 产出失败 Result 汇入既有重试/剪枝链路。
@@ -561,8 +561,8 @@ class AsyncScheduler:
 
         取消走分配时记录的 agent（ctx.task_agent），不重新分配。best-effort
         语义：agent 是否履约都不阻塞收尾——晚到结果由状态机丢弃（任务已是
-        CANCELLED）。失败不静默吞掉：保留 `cancel_failed` 可观测（内部剪枝
-        与外部整棵取消共用同一日志口径）。
+        CANCELLED）。失败不静默忽略：保留 `cancel_failed` 可观测（内部剪枝
+        与外部整棵取消共用同一日志格式）。
         """
         for tid in tids:
             agent_id = ctx.task_agent.get(tid)

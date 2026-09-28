@@ -1,6 +1,6 @@
 """自我学习规则提取测试（阶段二，学习层）。
 
-覆盖：失败模式 / 降级占比 / 风险分配失败率 / 预算超支 / 剪枝质量 / 正确性断链
+覆盖：失败模式 / 降级占比 / 风险分配失败率 / 预算超支 / 剪枝质量 / 正确性链路中断
 六类规则触发与不触发边界（阈值驱动）。
 """
 from orchestration.audit import Auditor
@@ -23,7 +23,7 @@ from test_scheduler import ScriptedAdapter, dag_of, fail, ok
 
 
 def run_audit_cost(dag: DAG, script: dict, retries=2, budget: dict | None = None):
-    """跑调度 → 审计 + 成本核算。返回 (AuditReport, CostReport)。"""
+    """执行调度 → 审计 + 成本核算。返回 (AuditReport, CostReport)。"""
     adapter = ScriptedAdapter(script)
     reg = AgentRegistry()
     reg.register(adapter)
@@ -44,7 +44,7 @@ def rule_ids(rules) -> set:
 
 
 # ---------------------------------------------------------------------------
-# 正确性断链（最高优先级）
+# 正确性链路中断（最高优先级）
 # ---------------------------------------------------------------------------
 
 class TestReconciliationRule:

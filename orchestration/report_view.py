@@ -1,15 +1,15 @@
 """运行存档的人读投影（接入层 Web / CLI 共用）。
 
 定位（对话共识）：**运行存档**（过程事件流 + 终态报告，落持久化底座）是唯一
-真源、单 run 不可变；**人读版是读时投影**——按需从真源渲染，不落盘成第二份
-真相（同"源 .md → HTML 发布副本"范式：源不动、视图按需）。
+权威来源、单 run 不可变；**人读版是读时投影**——按需从权威来源渲染，不另行落盘
+（避免产生第二份权威来源；同"源 .md → HTML 发布副本"范式：源文件不变、视图按需）。
 
 分层（不可混）：
 - **结构化人读版**（本模块 `build_run_view`）＝**纯确定性投影**：时间线 / 任务表
-  / 成本 / 治理结论 / 学习规则，全部来自存档事实；渲染确定性、可重放、零成本。
+  / 成本 / 治理结论 / 学习规则，全部来自存档事实；渲染确定性、可重放、无额外成本。
 - **叙述性摘要**（`narrative.py` 产出、经 `narrative` 字段并入）＝LLM 产出、
   **非确定、有成本**——显式触发、单独成节、标注来源，**绝不默认生成、不得混入
-  确定性报告**（同"判定 vs 审计"的分离口径）。
+  确定性报告**（同"判定 vs 审计"的分离方式）。
 
 因此 `build_run_view` 是纯函数：同一份存档 → 同一份视图（不含渲染时刻等易变
 元数据；时间戳只出现在 HTML/文本页脚）。渲染（`render_text` / `render_run_html`
@@ -63,7 +63,7 @@ def build_run_view(
     """把运行存档投影为结构化人读视图（纯函数、确定性）。
 
     dag：DAG 转储 {tasks: {tid: {...}}}（from 报告体或存档；含每任务 status/result）
-    events：过程事件流（增量时序，唯一过程真源）
+    events：过程事件流（增量时序，过程时序的唯一权威来源）
     report：终态报告转储（ScheduleReport dump，含治理/学习产物）；运行中为 None
     narrative：叙述摘要（非确定，None = 未生成）
     """
@@ -108,7 +108,7 @@ def build_run_view(
             "duration_ms": duration_ms,
             "event_count": len(events),
             "report_available": report is not None,
-            "source": "运行存档（事件流 + 终态报告）——持久化底座的不可变真源",
+            "source": "运行存档（事件流 + 终态报告）——持久化底座的不可变权威来源",
         },
         "summary": summary,
         "timeline": timeline,
@@ -344,7 +344,7 @@ def _reflection_line(ref: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# HTML 渲染（接入层 Web 页面；自包含、零依赖、同源）
+# HTML 渲染（接入层 Web 页面；自包含、无外部依赖、同源）
 # ---------------------------------------------------------------------------
 
 _CSS = """
@@ -448,7 +448,7 @@ def render_run_html(view: dict) -> str:
         parts.append(_prune_html(view["prunes"]))
     parts.append(_gov_html(view["governance"], view["learning"]))
     parts.append(_narrative_html(view.get("narrative")))
-    parts.append(_foot("唯一真源：运行存档；本页为按需读时投影"))
+    parts.append(_foot("唯一权威来源：运行存档；本页为按需读时投影"))
     return "".join(parts)
 
 
@@ -512,7 +512,7 @@ def _assign_html(rows: list[dict]) -> str:
             "</tr>"
         )
     return (
-        '<div class="card"><h2>分配留痕（三级策略）</h2><table><thead><tr>'
+        '<div class="card"><h2>分配记录（三级策略）</h2><table><thead><tr>'
         "<th>任务</th><th>agent</th><th>匹配</th><th>说明</th></tr></thead><tbody>"
         + body + "</tbody></table></div>"
     )

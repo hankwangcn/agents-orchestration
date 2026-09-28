@@ -1,6 +1,6 @@
-"""断点恢复端到端冒烟：运行中"崩溃" → StateStore 恢复 → 继续跑完。
+"""断点恢复端到端冒烟：运行中"崩溃" → StateStore 恢复 → 继续执行完毕。
 
-场景 1：崩溃点在无副作用任务执行中 → 恢复后重派，整棵跑完。
+场景 1：崩溃点在无副作用任务执行中 → 恢复后重派，整棵执行完毕。
 场景 2：崩溃点在声明副作用任务执行中 → 恢复后置 INTERRUPTED 不重派，
         人工 complete 后再恢复，下游继续。
 """
@@ -61,10 +61,10 @@ async def scenario1_pure_rerun(store: SqliteStateStore) -> None:
     assert report.total_cost == 0.03
     calls = [c[0] for c in adapter.calls]
     # a 调用 2 次：崩溃瞬间请求已发出（agent 端可能已执行）+ 恢复重派——
-    # 这正是 A 策略语义：纯产出任务重复执行可接受，代价是重复计费一次
+    # 这正是 A 策略语义：无副作用任务重复执行可接受，代价是重复计费一次
     assert calls.count("a") == 2
     assert calls.count("b") == 1 and calls.count("c") == 1
-    print(f"[S1] ✅ 恢复后整棵跑完，final={report.final_status}, cost=${report.total_cost}")
+    print(f"[S1] ✅ 恢复后整棵执行完毕，final={report.final_status}, cost=${report.total_cost}")
 
 
 async def scenario2_side_effect_interrupted(store: SqliteStateStore) -> None:

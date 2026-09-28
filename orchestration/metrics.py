@@ -1,7 +1,7 @@
 """可观测性（阶段四）：轻量指标收集 + 结构化日志。
 
 设计原则：不引外部依赖（无 Prometheus/structlog）——指标是内存聚合的
-dataclass，直接喂审计器与学习引擎；日志是标准 logging + key=value 结构化
+dataclass，直接供审计器与学习引擎消费；日志是标准 logging + key=value 结构化
 formatter。数据面保持轻量纯净，观测面留给标准库。
 
 MetricsCollector 是 asyncio 单线程安全的（事件循环内调用），

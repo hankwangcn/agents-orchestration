@@ -1,11 +1,11 @@
-"""人读叙述摘要（LLM 产出；**显式生成、非确定、单独留痕**）。
+"""人读叙述摘要（LLM 产出；**显式生成、非确定、单独记录**）。
 
 定位：运行存档的**确定性人读投影**（`report_view`）讲事实、结论可重复；叙述摘要
 讲"一段话说清得失"——这是 LLM 产出，**非确定、有成本**。因此它：
 
 - 只**显式触发**（`POST /api/runs/{id}/narrative`），绝不默认生成；
 - 单独成节并**标注来源**（model / 生成时间），**不混入确定性报告**；
-- 与审计（确定性、结论可重放）分离标注来源——同"判定 vs 审计"的口径。
+- 与审计（确定性、结论可重放）分离标注来源——同"判定 vs 审计"的分离方式。
 
 形态：框架内部 LLM 调用，**不走消息协议**（同拆解引擎）——复用底层聊天入口，
 输入 = 从运行存档投影出的结构化事实（**不是**原始存档全量），输出 = 一段面向
@@ -38,7 +38,7 @@ class NarrativeError(Exception):
 class Narrator:
     """把运行存档投影为一段人读总结（框架内部 LLM 调用，非确定）。
 
-    llm_call：接收完整提示词文本、返回模型原始响应（复用适配器裸聊天入口）。
+    llm_call：接收完整提示词文本、返回模型原始响应（复用适配器纯文本聊天入口）。
     max_chars：事实摘要的截断上限（提示词要控规模）。
     """
 
@@ -73,7 +73,7 @@ class Narrator:
 
 
 def _facts(view: dict, max_chars: int) -> str:
-    """从运行存档视图提取紧凑事实（控规模；不塞原始产出全量）。"""
+    """从运行存档视图提取紧凑事实（控规模；不写入原始产出全量）。"""
     a = view.get("archive") or {}
     s = view.get("summary") or {}
     gov = view.get("governance") or {}
@@ -126,7 +126,7 @@ def make_default_narrator(
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
 ) -> Narrator:
-    """默认叙述器：复用 DeepSeek 适配器裸聊天入口（同一套端点与鉴权）。
+    """默认叙述器：复用 DeepSeek 适配器纯文本聊天入口（同一套端点与鉴权）。
 
     api_key 缺省回落到环境变量 DEEPSEEK_API_KEY；两者皆无则抛 ValueError——
     由调用方决定是否启用叙述能力。

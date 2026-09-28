@@ -3,7 +3,7 @@
 覆盖：
 - StateStore 读写往返 / active_runs / delete
 - resume_run 恢复语义：RUNNING 无副作用重派、有副作用置 INTERRUPTED、
-  已终态复用（不重跑不重计费）、SKIPPED 依赖恢复
+  已终态复用（不重新执行、不重复计费）、SKIPPED 依赖恢复
 - 恢复后失败传播仍工作
 - 网关 resume / resolve 全流程（含人工 complete 后下游继续）
 """
@@ -148,7 +148,7 @@ class TestResume:
         assert status == TaskStatus.RUNNING
 
     def test_reruns_running_pure_task(self, tmp_path):
-        """RUNNING 无副作用 → 重派，整棵跑完。"""
+        """RUNNING 无副作用 → 重派，整棵执行完毕。"""
         store = SqliteStateStore(str(tmp_path / "s.db"))
         dag = DAG(tasks={
             "a": Task(id="a", desc="a", status=TaskStatus.RUNNING),
@@ -181,7 +181,7 @@ class TestResume:
         assert adapter.calls == []  # 副作用任务未被再次执行
 
     def test_keeps_completed_results_and_cost(self, tmp_path):
-        """已终态任务不重跑、结果与成本复用（不重计费）。"""
+        """已终态任务不重新执行、结果与成本复用（不重计费）。"""
         store = SqliteStateStore(str(tmp_path / "s.db"))
         dag = DAG(tasks={
             "a": Task(
@@ -197,7 +197,7 @@ class TestResume:
         sched, _ = make_scheduler(store, adapter)
         report = asyncio.run(sched.resume_run("r1"))
         assert report.final_status == "success"
-        assert [c[0] for c in adapter.calls] == ["b"]  # a 不重跑
+        assert [c[0] for c in adapter.calls] == ["b"]  # a 不重新执行
         assert report.results["a"].output == {"n": 1}  # a 结果复用
         assert report.total_cost == 0.02  # a 0.01（复用）+ b 0.01
 
@@ -249,7 +249,7 @@ class TestResume:
 
 class TestGatewayResume:
     def test_resume_resolve_full_flow(self, tmp_path):
-        """提交前崩溃现场 → resume 中断 → resolve complete → resume 跑完。"""
+        """提交前崩溃现场 → resume 中断 → resolve complete → resume 执行完毕。"""
         store = SqliteStateStore(str(tmp_path / "g.db"))
         dag = DAG(tasks={
             "a": Task(id="a", desc="a", status=TaskStatus.RUNNING,
@@ -283,7 +283,7 @@ class TestGatewayResume:
             assert r.status_code == 200
             assert r.json()["status"] == "success"
 
-            # 3. 再次恢复 → 下游 b 跑完
+            # 3. 再次恢复 → 下游 b 执行完毕
             assert client.post("/api/runs/r1/resume").status_code == 200
             self._wait_done(client, "r1")
             report = client.get("/api/runs/r1/report").json()

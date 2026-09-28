@@ -11,7 +11,7 @@
 - 复现门槛：单 run 的规则**不进**提示词，跨 run 复现后才进（"客观支撑"=复现证据）
 - 提示词结构稳定：前缀恒为固定指令、结尾恒为用户目标，指导块居中注入
 - 经验库聚合（ao lessons / GET /api/lessons）：命中次数 / 贡献 run 数
-- 学习层是复盘不是主链路：无 goal 的 run 照常收尾并产出学习产物
+- 学习层是复盘不是主链路：无 goal 的 run 正常收尾并产出学习产物
 
 运行：.venv/bin/python scripts/smoke_learning.py
 （无需 API key——全部打到本地 mock 端点 scripts/mock_agents.py）
@@ -96,7 +96,7 @@ def rule_ids(payload: dict) -> list[str]:
 
 
 def run_cli(argv: list[str]) -> int:
-    """子线程里跑真实 CLI（内部走真实 HTTP 打到本地网关）。"""
+    """子线程里运行真实 CLI（内部走真实 HTTP 打到本地网关）。"""
     box: dict = {}
     th = threading.Thread(target=lambda: box.setdefault("rc", cli.main(argv)))
     th.start()
@@ -127,7 +127,7 @@ async def main() -> int:
         await registry.aensure_fresh()
         print(f"   judge.capabilities = {registry.get('judge').capabilities}"
               f"；flaky.capabilities = {registry.get('flaky').capabilities}")
-        results.append(check("判定/执行能力均被问出来",
+        results.append(check("判定与执行能力均经采集获得",
                              "judge" in registry.get("judge").capabilities))
 
         # 网关形态：run 走网关的 RunManager，CLI 才能按 run_id/经验库查询
@@ -205,7 +205,7 @@ async def main() -> int:
                              snap["runs_considered"] == 2
                              and fp["occurrences"] == 2 and fp["runs"] == 2))
 
-        print("\n== 7. 闭环出口：回馈拆解提示词 ==")
+        print("\n== 7. 闭环回馈点：回馈拆解提示词 ==")
         g2 = PromptAdvisor(registry, store, min_occurrences=2).guidance()
         prompts: list[str] = []
 
@@ -240,7 +240,7 @@ async def main() -> int:
         payload3 = manager.report(run3)
         print(f"   reflection.enabled={report3.reflection['enabled']} "
               f"learning.rules={rule_ids(payload3)}")
-        results.append(check("无目标 → 判定跳过，但学习/审计/成本照常产出",
+        results.append(check("无目标 → 判定跳过，但学习/审计/成本正常产出",
                              report3.reflection["enabled"] is False
                              and bool(rule_ids(payload3))
                              and payload3["audit"] is not None
@@ -251,7 +251,7 @@ async def main() -> int:
 
         print("\n== 9. 真实 CLI：ao report / ao lessons（走真实 HTTP）==")
         rc = await asyncio.to_thread(run_cli, ["-u", GATEWAY, "report", run2])
-        results.append(check("ao report 打印审计/成本/学习三件套", rc == 0))
+        results.append(check("ao report 打印审计/成本/学习三项", rc == 0))
         rc = await asyncio.to_thread(run_cli, ["-u", GATEWAY, "lessons"])
         results.append(check("ao lessons 打印跨 run 经验库", rc == 0))
 

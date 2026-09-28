@@ -3,7 +3,7 @@
 输入：ScheduleReport + AgentRegistry（预算声明对比）。
 输出：CostReport——按 agent / 匹配类型归集成本，预算超支标记。
 
-核算口径（架构 §5.4）：剪枝任务已发生的消耗照记总账，但单独归集暴露——
+核算方式（架构 §5.4）：剪枝任务已发生的消耗照记总账，但单独归集暴露——
 "已发生消耗不算浪费账目"，是审计对账的事实基础。
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ class CostReport(BaseModel):
     failed_cost: float = 0.0
     """失败任务已消耗成本（暴露重试/失败的沉没成本）。"""
     pruned_cost: float = 0.0
-    """剪枝任务已发生消耗（先成功后仍被剪的任务，§5.4 口径）。"""
+    """剪枝任务已发生消耗（先成功后仍被剪的任务，§5.4 定义）。"""
     over_budget_agents: list[dict] = Field(default_factory=list)
 
 

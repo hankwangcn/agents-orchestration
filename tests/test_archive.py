@@ -1,4 +1,4 @@
-"""运行存档（持久化底座）测试：过程事件流 + 报告读回 + 运行枚举 + 叙述留痕。
+"""运行存档（持久化底座）测试：过程事件流 + 报告读回 + 运行枚举 + 叙述记录。
 
 归档分层：运行存档 = 过程（事件流）+ 终态报告，属持久化底座、单 run 不可变；
 人读版是读时投影（report_view），不落盘。本测试覆盖底座的读写与级联清理。
@@ -117,7 +117,7 @@ class TestDeleteCascade:
 
 
 class TestBaseDegradation:
-    """存储未实现归档能力时应优雅退化（no-op / 空），不拖垮调用方。"""
+    """存储未实现归档能力时应安全退化（no-op / 空），不影响调用方。"""
 
     def test_base_defaults(self):
         class Minimal(StateStore):

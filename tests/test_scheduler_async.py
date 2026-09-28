@@ -30,7 +30,7 @@ from helpers import AsyncScriptedAdapter, ConcurrencyProbeAdapter, ok, fail, dag
 # ---------------------------------------------------------------------------
 
 def run(sched: AsyncScheduler, dag: DAG, **kw):
-    """同步测试里跑异步调度。"""
+    """同步测试里执行异步调度。"""
     return asyncio.run(sched.run(dag, **kw))
 
 
@@ -107,7 +107,7 @@ class TestConcurrencyLimit:
         assert probe.peak == 2
 
     def test_concurrency_split_across_agents(self):
-        """两个 agent 各自限 1：各跑各的，互不阻塞。
+        """两个 agent 各自限 1：各自独立执行，互不阻塞。
 
         b 任务显式指定 claude-3.5（否则默认 deepseek-chat 会全部精确匹配 agent_001）。
         """
@@ -183,7 +183,7 @@ class TestFailureRace:
             "c": [ok("c")],   # 慢：b 失败剪枝时仍在运行
             "d": [ok("d")],
         })
-        adapter.script_delay = {"c": 0.2}  # b 三连失败期间 c 仍在跑
+        adapter.script_delay = {"c": 0.2}  # b 连续三次失败期间 c 仍在运行
 
         sched, _ = make_scheduler(adapter, retries=2)
         report = run(sched, dag)
@@ -217,7 +217,7 @@ class TestFailureRace:
         assert all(t.status != TaskStatus.RUNNING for t in dag.tasks.values())
 
     def test_independent_branch_survives_failure(self):
-        """双分支：b 分支失败剪枝，c→e 独立分支照常完成 → partial。"""
+        """双分支：b 分支失败剪枝，c→e 独立分支正常完成 → partial。"""
         dag = dag_of(("a", []), ("b", ["a"]), ("c", ["a"]), ("d", ["b"]), ("e", ["c"]))
         adapter = AsyncScriptedAdapter({
             "a": [ok("a")],
@@ -273,7 +273,7 @@ class TestExternalControl:
 
         async def _run_then_cancel():
             t = asyncio.create_task(sched.run(dag, run_id="r1", cancel_event=ev))
-            await asyncio.sleep(0.02)  # a 可能已完成，b/c 在跑
+            await asyncio.sleep(0.02)  # a 可能已完成，b/c 运行中
             ev.set()
             return await t
 
@@ -288,7 +288,7 @@ class TestExternalControl:
         assert dag.tasks["c"].status == TaskStatus.CANCELLED
 
     def test_concurrent_runs_isolated(self):
-        """同一 scheduler 实例并发跑两个 DAG：状态互不串扰（_RunCtx 隔离）。"""
+        """同一 scheduler 实例并发执行两个 DAG：状态互不干扰（_RunCtx 隔离）。"""
         dag1 = dag_of(("x", []), ("y", ["x"]))
         dag2 = DAG(tasks={
             "p": Task(id="p", desc="p",
@@ -376,7 +376,7 @@ class TestObservability:
         assert m.final_status == "failed"
 
     def test_peak_concurrency_counted_per_agent(self):
-        """metrics 并发峰值按 agent 记账——跨 agent 并行不互相计入。
+        """metrics 并发峰值按 agent 归集——跨 agent 并行不互相计入。
 
         回归（P3）：_execute_task 曾把全 DAG 的 RUNNING 数（含其他
         agent 的任务）记到单 agent 名下：3 任务并行时 agent_001 峰值
@@ -415,7 +415,7 @@ class TestMultiRunQuota:
     """网关 RunManager 共用单 AsyncScheduler（_sems 跨 run 共享）场景。"""
 
     def test_quota_blocked_run_waits_not_skipped(self):
-        """并发槽被 run A 占满 → run B 等待槽位释放后续跑，不误标 SKIPPED。
+        """并发槽被 run A 占满 → run B 等待槽位释放后继续运行，不误标 SKIPPED。
 
         回归（P1）：派发轮曾把「配额阻塞」误判为「依赖失败不可达」——
         B 的 ready 任务全部被 _has_quota 跳过后落入 _mark_skipped 分支，
@@ -447,7 +447,7 @@ class TestMultiRunQuota:
 
     def test_unreachable_pending_still_skipped(self):
         """依赖已终态（CANCELLED）的 PENDING 任务无可派发 → 仍走防御性
-        SKIPPED（原语义不变，只是不再吞掉配额阻塞场景）。"""
+        SKIPPED（原语义不变，只是不再静默忽略配额阻塞场景）。"""
         dag = dag_of(("a", []), ("b", ["a"]))
         dag.tasks["a"].status = TaskStatus.CANCELLED  # 预置：依赖已取消
         adapter = AsyncScriptedAdapter({})
@@ -504,23 +504,23 @@ class TestRefreshWiring:
         dag = dag_of(("a", []))
         adapter = _InfoProbeAdapter({"a": [ok("a")]})
         sched, reg = make_scheduler(adapter)
-        reg.collect()  # 先采集一次 → 新鲜
+        reg.collect()  # 先采集一次 → 未过期
         before = list(adapter.info_scopes)
         run(sched, dag)
-        # 池级刷新跳过（新鲜），仅派发决策点仍有 2 次易变维度校验
+        # 池级刷新跳过（未过期），仅派发决策点仍有 2 次易变维度校验
         assert adapter.info_scopes[len(before):] == ["resource", "constraint"]
 
 
 class TestFrameworkTimeout:
     """#34：框架侧 wall-clock 超时——required_resources.timeout 从"声明给 agent
-    的建议值"变为框架强制执行，agent 挂死不再永久占住并发槽。"""
+    的建议值"变为框架强制执行，agent 无响应不再永久占住并发槽。"""
 
     def test_hanging_task_times_out_and_fails(self):
         dag = DAG(tasks={
             "a": Task(id="a", desc="a",
                       required_resources=ResourceRequirement(timeout=1)),
         })
-        adapter = AsyncScriptedAdapter({"a": [ok("a")]}, delay=30)  # 挂死
+        adapter = AsyncScriptedAdapter({"a": [ok("a")]}, delay=30)  # 无响应
         sched, _ = make_scheduler(adapter, retries=0)
 
         t0 = time.monotonic()
@@ -535,7 +535,7 @@ class TestFrameworkTimeout:
         assert not sched._sems["agent_001"].locked()
 
     def test_timeout_releases_slot_for_next_run(self):
-        """超时后同一 agent 仍可派发——挂死调用不再永久占住并发槽。
+        """超时后同一 agent 仍可派发——无响应调用不再永久占住并发槽。
 
         （若槽泄漏，第二次 run 会永久阻塞在 async with sem 上，故设 5s 上限。）
         """
@@ -554,7 +554,7 @@ class TestFrameworkTimeout:
         assert r2.final_status == "success"
 
     def test_timeout_zero_disables_framework_timeout(self):
-        """timeout<=0 = 不设超时：慢任务照常跑完（不被框架中断）。"""
+        """timeout<=0 = 不设超时：慢任务正常执行完毕（不被框架中断）。"""
         dag = DAG(tasks={"a": Task(
             id="a", desc="a", required_resources=ResourceRequirement(timeout=0))})
         adapter = AsyncScriptedAdapter({"a": [ok("a")]}, delay=0.2)
@@ -592,7 +592,7 @@ class TestDispatchRetryIgnoresSideEffects:
     """#58 定标（方案 B）：派发内重试不区分副作用声明，幂等责任归执行侧。
 
     对照 §5.5 断点恢复路径的 A+B 策略（声明副作用的任务恢复时不自动重派）：
-    两条路径口径不同——恢复路径拦截，派发内重试不拦截，由协议模板声明
+    两条路径处理方式不同——恢复路径拦截，派发内重试不拦截，由协议模板声明
     「声明副作用的任务须自行保证幂等」。
     """
 
@@ -629,7 +629,7 @@ class TestDispatchRetryIgnoresSideEffects:
 # ---------------------------------------------------------------------------
 
 class CancelFailAdapter(AsyncScriptedAdapter):
-    """取消下发恒失败：验证 best-effort 不静默吞掉（两路取消共用日志口径）。"""
+    """取消下发恒失败：验证 best-effort 不静默忽略（两路取消共用日志格式）。"""
 
     async def acancel(self, task_id: str, request_id: str) -> Result:
         raise RuntimeError("agent unreachable")
@@ -639,7 +639,7 @@ class TestUnifiedCancelPrimitive:
     """#36：内部剪枝与外部整棵取消共用 `_send_cancel`。
 
     回归点：两条取消路径曾各写一份循环，且外部路径用 `except: pass`
-    静默吞掉失败——统一后两路都保留 `cancel_failed` 可观测。
+    静默忽略失败——统一后两路都保留 `cancel_failed` 可观测。
     """
 
     def _info_logs(self, caplog):

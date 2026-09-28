@@ -15,19 +15,19 @@
 - 无此类 agent 时，按 `allow_self_judge` 决定：降级为自判（在报告中标记
   `independent=False`，**明确这是可靠性打折的判定**）或直接跳过。
 
-形态（复用既有机制，零新增协议）：
+形态（复用既有机制，无新增协议）：
 - 判定 = 一次普通的 `task_request`（desc 放判定指令、inputs 放基准与证据、
   output_schema 放判定结构），走适配器基类的协议装配 + 双层校验解析 +
-  解析重试——**消息类型不新增、agent 零变更**；
+  解析重试——**消息类型不新增、agent 无变更**；
 - 判定输出受 output_schema 框架侧强校验（与任务产出同等严格）。
 
 动作边界（**advisory，不阻断**）：
-- 结论写进 ScheduleReport.reflection（报告可见）+ 喂学习层（JUD-* 规则）；
-- **不改任务状态、不自动重跑、不阻断交付**——是否采纳由审计/人工定夺
+- 结论写入 ScheduleReport.reflection（报告可见）+ 供学习层消费（JUD-* 规则）；
+- **不改任务状态、不自动重新执行、不阻断交付**——是否采纳由审计/人工定夺
   （副作用任务重派 = 副作用执行两次，是既有红线）。
 
 审计边界（不得混淆）：审计是**只读、纯函数、结论可重复（可重放）**的事实对账；判定是
-**非确定、有成本**的语义结论。两者独立留痕，不合并——合并会破坏审计
+**非确定、有成本**的语义结论。两者独立记录，不合并——合并会破坏审计
 结论可重复这一属性。判定产出不再被判定（递归边界）。调用次数与成本单列。
 """
 from __future__ import annotations
@@ -44,7 +44,7 @@ from .models import Assignment, ResourceRequirement, Result, ScheduleReport, Tas
 from .registry import AgentRegistry
 from .timeouts import call_with_timeout
 
-# 声明了任一标签即视为"判定 agent"（能力是问出来的——同 capability 采集口径）
+# 声明了任一标签即视为"判定 agent"（能力经信息请求采集——同 capability 采集方式）
 JUDGE_CAPABILITIES: tuple[str, ...] = ("judge", "reviewer", "reflection")
 
 REFLECTION_TASK_ID = "__reflection__"
@@ -77,7 +77,7 @@ INPUT 里是你的判定素材（JSON）：
 {"achieved": true, "score": 0.9, "reasons": ["..."], "gaps": []}
 """
 
-# 正确判定示例：解析失败重试时随修正提示给出（口径同协议 §7.3）
+# 正确判定示例：解析失败重试时随修正提示给出（定义同协议 §7.3）
 REFLECTION_EXAMPLE: dict = {
     "achieved": False,
     "score": 0.3,
@@ -120,7 +120,7 @@ class Reflector:
     """运行级判定器：最终交付 × 原始目标 → ReflectionReport。
 
     registry：只读用途（挑判定 agent / 判定失败时降级分配），与审计器同构。
-    max_chars：单个产出/摘要的截断上限（判定请求要控规模，不能把交付全文塞进去）。
+    max_chars：单个产出/摘要的截断上限（判定请求要控规模，不得全文注入交付产出）。
     allow_self_judge：无独立判定 agent 时是否降级自判（默认允许，但报告里
     标记 independent=False）。
     """
@@ -266,7 +266,7 @@ class Reflector:
         return out, task, assignment, adapter
 
     def _judge_agent(self) -> Optional[RegisteredAgent]:
-        """注册表中声明了判定能力的可用 agent（能力是问出来的）。"""
+        """注册表中声明了判定能力的可用 agent（能力经信息请求采集）。"""
         for a in self._registry.agents.values():
             if a.available and set(a.capabilities) & set(JUDGE_CAPABILITIES):
                 return a
@@ -340,7 +340,7 @@ class Reflector:
         return text[: self.max_chars]
 
     # ------------------------------------------------------------------
-    # 结论落地
+    # 结论写入
     # ------------------------------------------------------------------
 
     def _apply(self, out: ReflectionReport, result: Result) -> None:

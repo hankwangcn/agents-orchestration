@@ -2,7 +2,7 @@
 
 用途：以"本地 HTTP 端点"模拟真实 agent——框架（客户端）通过 DeepSeekAdapter
 走真实 HTTP 调到这里（服务端），完整验证：
-协议装配 → HTTP 传输 → 解析兜底 → 调度行为，链路与真实 agent 完全一致。
+协议装配 → HTTP 传输 → 解析容错 → 调度行为，链路与真实 agent 完全一致。
 
 与真实 agent 的唯一差异是"业务智能"：mock 不真思考，它解析请求中注入的
 协议 REQUEST JSON，按 agent 配置脚本化应答（协议响应模拟器）。框架侧对
@@ -48,7 +48,7 @@ def _extract_request(messages: list[dict]) -> Optional[dict]:
         if not isinstance(content, str) or REQUEST_MARKER not in content:
             continue
         rest = content.split(REQUEST_MARKER, 1)[1].strip()
-        for candidate in (rest.split("\n", 1)[0], rest):  # json.dumps 单行；兜底整段
+        for candidate in (rest.split("\n", 1)[0], rest):  # json.dumps 单行；回退整段
             try:
                 return json.loads(candidate)
             except json.JSONDecodeError:
@@ -135,7 +135,7 @@ class MockAgentServer:
 
         self.app = FastAPI(title="mock-agents")
         # openai SDK 请求路径 = base_url + "/chat/completions"；
-        # 同时挂 /v1 前缀兼容不同 base_url 习惯
+        # 同时提供 /v1 前缀兼容不同 base_url 习惯
         for path in ("/chat/completions", "/v1/chat/completions"):
             self.app.post(path)(self._chat_completions)
 
@@ -316,7 +316,7 @@ def default_configs() -> list[MockAgentConfig]:
 def judge_configs() -> list[MockAgentConfig]:
     """默认阵容 + 判定角色（治理层反思/判定冒烟用；不影响 default_configs）。
 
-    判定能力标签为 judge——框架按"能力是问出来的"经 info_request 采集到后，
+    判定能力标签为 judge——框架按"能力经信息请求采集"的方式获取到后，
     反思模块优先选它作独立判定者（异构模型：不参与任务执行）。
     """
     return default_configs() + [

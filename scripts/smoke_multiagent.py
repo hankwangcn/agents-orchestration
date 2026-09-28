@@ -1,7 +1,7 @@
 """多 agent 全流程冒烟（档三：真实 HTTP 往返，无需真实 LLM 与 API key）。
 
 验证链路：注册 → info_request 能力采集（真实 HTTP）→ 异步并发调度（真实
-HTTP）→ 三级分配留痕 → 解析层兜底（杂文重试）→ 传输层故障（HTTP 500）
+HTTP）→ 三级分配记录 → 解析容错（杂文重试）→ 传输层故障（HTTP 500）
 → 任务重试耗尽 → 自动摘除 → 失败传播/反向可达剪枝 → 审计 → 成本 → 学习。
 
 agent 阵容（本地 mock 端点 scripts/mock_agents.py）：
@@ -12,7 +12,7 @@ agent 阵容（本地 mock 端点 scripts/mock_agents.py）：
 
 DAG（9 任务）覆盖的分配/失败矩阵：
   t1  model=coder-agent, caps=[code_gen]        → exact（coder，能力覆盖）
-  t2  model=coder-agent, caps=[translation]     → exact 但能力不覆盖 → risk 留痕
+  t2  model=coder-agent, caps=[translation]     → exact 但能力不覆盖 → risk 记录
   t3  model=translator-agent                    → exact（translator）
   t4  caps=[data_analysis]                      → capability（analyst，杂文重试）
   t5  caps=[video_editing]（无人有）            → degraded（translator）
@@ -144,7 +144,7 @@ async def main() -> int:
                     extra += f" err={r.error.code}"
             print(f"   {tid}: {t.status.value:<10}{extra}")
 
-        print("\n== 3. 分配留痕（三级策略）==")
+        print("\n== 3. 分配记录（三级策略）==")
         for ass in report.assignments:
             risk = " RISK" if ass.risk else ""
             print(f"   {ass.task_id} -> {ass.agent_id} "
@@ -223,7 +223,7 @@ async def main() -> int:
         ))
         ass_map = {a.task_id: a for a in report.assignments}
         results.append(check(
-            "三级分配留痕齐全",
+            "三级分配记录完整",
             ass_map["t1"].match_type == "exact" and ass_map["t1"].agent_id == "coder"            and ass_map["t2"].risk is True and ass_map["t2"].agent_id == "coder"
             and ass_map["t3"].match_type == "exact"
             and ass_map["t3"].agent_id == "translator"
@@ -235,7 +235,7 @@ async def main() -> int:
             and ass_map["t9"].match_type == "degraded",
         ))
         # analyst 第 1 次杂文 + 解析重试成功 → 恰好 2 次调用（解析重试不消耗任务重试）
-        results.append(check("解析层兜底: analyst 杂文→重试成功（2 次调用）",
+        results.append(check("解析容错: analyst 杂文→重试成功（2 次调用）",
                              server.calls.get("analyst") == 2,
                              f"calls={server.calls.get('analyst')}"))
         results.append(check("per-agent 并发上限生效: translator peak ≤ 2",

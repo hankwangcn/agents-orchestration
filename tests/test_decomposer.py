@@ -80,7 +80,7 @@ class TestDecomposeSuccess:
         assert dag.final_tasks() == {"task_002"}
 
     def test_code_fenced_output_tolerated(self):
-        """markdown 代码块包裹 + 前后杂文 → 解析组件照常提取（§7.6）。"""
+        """markdown 代码块包裹 + 前后杂文 → 解析组件正常提取（§7.6）。"""
         llm = ScriptedLLM(f"这是结果：\n```json\n{raw(VALID)}\n```\n以上。")
         dag = Decomposer(llm).decompose("目标")
         assert set(dag.tasks) == {"task_001", "task_002"}
@@ -164,7 +164,7 @@ class TestSchemaGates:
 
 class TestRetry:
     def test_retry_recovers_with_correction_prompt(self):
-        """首次不合规 → 第二次带「失败原因 + 正确示例」重试（§7.3 口径）。"""
+        """首次不合规 → 第二次带「失败原因 + 正确示例」重试（§7.3 处理方式）。"""
         bad = raw({"tasks": [{"id": "t1", "desc": "a", "deps": ["ghost"]}]})
         llm = ScriptedLLM(bad, raw(VALID))
         dag = Decomposer(llm).decompose("目标")
@@ -218,7 +218,7 @@ class TestTemperature:
 
 
 class TestDefaultDecomposer:
-    """默认拆解引擎：复用 DeepSeekAdapter 的裸聊天入口（同一套端点/鉴权）。"""
+    """默认拆解引擎：复用 DeepSeekAdapter 的纯文本聊天入口（同一套端点/鉴权）。"""
 
     def test_wires_model_and_temperature(self, monkeypatch):
         captured: dict = {}
@@ -257,5 +257,5 @@ class TestAdjudicationScopeDeclaration:
         assert "无需在子任务中穷举偏好或预设决策分支" in DECOMPOSITION_PROMPT
 
     def test_prompt_version_matches_text(self):
-        """提示词文本变更即升版留痕（新版声明与旧版提示词不得错配）。"""
+        """提示词文本变更即升版记录（新版声明与旧版提示词不得错配）。"""
         assert DECOMPOSE_PROMPT_VERSION == "v3"

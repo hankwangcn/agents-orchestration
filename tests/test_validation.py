@@ -130,7 +130,7 @@ class TestValidateResult:
             validate_result(obj, request_id="r")
 
     def test_extra_fields_tolerated(self):
-        """幻觉加字段（§7.1 R1）不判死，保留容忍策略。"""
+        """幻觉加字段（§7.1 R1）不判为失败，保留容忍策略。"""
         obj = {"request_id": "r", "task_id": "t1", "success": True,
                "output": {}, "extra_field": "无所谓"}
         r = validate_result(obj, request_id="r")

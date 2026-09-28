@@ -1,12 +1,12 @@
 """Agent 注册表——**组合门面**（架构 §3.2 规划层 × 调度层；阶段三起公开 API）。
 
-层间切分（本次详细设计落地）：
+层间切分（本次详细设计的实施）：
 - **规划层「资源统计器」** = `agent_pool.AgentPool`
   注册登记 / info_request 采集 / 声明解析入库 / 刷新（TTL + 决策点校验）/ 画像查询
 - **调度层「资源协调器」** = `allocator.Allocator`
   三级分配（exact → capability → degraded）/ 多实例轮询 / 连续失败摘除
 
-`AgentRegistry` 只是把两者组装起来并**零逻辑转发**（组合根），保持阶段三以来的
+`AgentRegistry` 只是把两者组装起来并**仅转发调用**（组合根），保持阶段三以来的
 公开 API 不变——调度器 / 网关 / CLI / 审计 / 成本核算均按此接口调用，无需改动。
 需要哪一半能力，也可直接依赖 `AgentPool` / `Allocator`。
 
@@ -197,7 +197,7 @@ class AgentRegistry:
         config: Union[str, dict],
         adapter_factory: Optional[Callable[[dict], AgentAdapter]] = None,
     ) -> "AgentRegistry":
-        """从配置文件 / dict 批量注册 N 个 agent（免逐行 register()）。
+        """从配置文件 / dict 批量注册 N 个 agent（无需逐行调用 register()）。
 
         config 支持三种形态：
         - dict —— 直接传入配置
@@ -205,7 +205,7 @@ class AgentRegistry:
         - str 且以 .json 结尾 —— 读 JSON 文件
 
         配置结构（能力/资源/约束声明一条都不用配——那是 info_request
-        collect() 问出来的；这里只写"agent 在哪、叫什么模型"）：
+        collect() 采集得到的；这里只写"agent 在哪、叫什么模型"）：
 
             max_consecutive_failures: 3        # 可选：连续失败摘除阈值
             default_agent: translator          # 可选：降级目标 agent_id
@@ -218,7 +218,7 @@ class AgentRegistry:
                 template_mode: full            # 可选：full | simple
 
         默认 adapter_factory：DeepSeekAdapter（OpenAI 兼容端点——base_url
-        指向任意 OpenAI 兼容服务即接入，零代码；与框架"配置即接入"一致）。
+        指向任意 OpenAI 兼容服务即接入，无需代码；与框架"配置即接入"一致）。
         api_key 优先级：条目 api_key > api_key_env 环境变量 > 环境变量
         DEEPSEEK_API_KEY（DeepSeekAdapter 默认行为）。
 

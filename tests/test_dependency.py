@@ -71,7 +71,7 @@ class TestReachability:
     def test_unreachable_from(self):
         """剪枝取消集：存活交付点反向走不到的任务。"""
         g = DependencyGraph(dag_of(*DIAMOND))
-        assert g.unreachable_from({"d"}) == set()      # 全图都喂给 d
+        assert g.unreachable_from({"d"}) == set()      # 全图都到达 d
         assert g.unreachable_from({"b"}) == {"c", "d"}  # c 分支与 d 被剪
 
     def test_two_independent_branches(self):
@@ -118,7 +118,7 @@ class TestTopology:
 
 class TestDeterministicOrdering:
     """回归：邻接表曾用 set——字符串 hash 随机化（PYTHONHASHSEED）使并列节点
-    顺序在进程间不可复现，拓扑序/并行前沿偶发翻转（曾在全量跑时间歇失败）。"""
+    顺序在进程间不可复现，拓扑序/并行前沿偶发翻转（曾在全量执行中间歇失败）。"""
 
     def test_sibling_order_follows_task_insertion(self):
         g = DependencyGraph(dag_of(*DIAMOND))
@@ -170,7 +170,7 @@ class TestValidate:
             g.validate(require_final=True)  # 空图无交付点 → 非法
 
     def test_dependency_error_is_value_error(self):
-        """继承 ValueError：调用方既有兜底捕获口径不变。"""
+        """继承 ValueError：调用方既有兼容捕获方式不变。"""
         assert issubclass(DependencyError, ValueError)
 
 

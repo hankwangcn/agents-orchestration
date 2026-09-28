@@ -2,7 +2,7 @@
 
 工程要求（协议 §7.9）：本模块必须是框架内**最严格、测试最全**的模块——
 它是整个协议稳定性的地基。所有稳定性风险（R1 格式漂移 / R4 可观测性）
-在此吸收，agent 侧保持零适配。
+在此吸收，agent 侧保持无需适配。
 """
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ def _type_ok(value: Any, token: str) -> bool:
 
 
 def _type_name(value: Any) -> str:
-    """给错误信息用的可读类型名（bool 先于 int 判定）。"""
+    """用于错误信息的可读类型名（bool 先于 int 判定）。"""
     if isinstance(value, bool):
         return "boolean"
     if isinstance(value, (int, float)):

@@ -7,11 +7,11 @@ https://api.deepseek.com。实现 _call_llm 即完成协议接入——协议装
 api_key 默认从环境变量 DEEPSEEK_API_KEY 读取（构造时未显式传入）。
 
 真实元数据回填（冒烟实测发现）：真实 LLM 不会自报 usage（协议 §4.2 的
-agent 自报仅作兜底），真实 token / 耗时只能从 API 响应捕获——
+agent 自报仅在缺失时采用），真实 token / 耗时只能从 API 响应捕获——
 _call_llm/_acall_llm 用 contextvars 记录（协程隔离，多协程共享实例无竞态），
 _post_process 在解析后回填 Result.usage 与 duration_ms。
 
-阶段四：_acall_llm 用 AsyncOpenAI 真异步——并发调度下网络等待不阻塞事件循环。
+阶段四：_acall_llm 用 AsyncOpenAI 原生异步——并发调度下网络等待不阻塞事件循环。
 """
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ class DeepSeekAdapter(AgentAdapter):
         return result
 
     async def achat(self, prompt: str, temperature: float | None = None) -> str:
-        """异步裸聊天入口：供拆解引擎等框架内部组件复用同一适配器。
+        """异步纯文本聊天入口：供拆解引擎等框架内部组件复用同一适配器。
 
         temperature 显式传入则覆盖实例默认值（拆解引擎按自身参数注入）。
         """
@@ -118,7 +118,7 @@ class DeepSeekAdapter(AgentAdapter):
         return resp.choices[0].message.content or ""
 
     def chat(self, prompt: str, temperature: float | None = None) -> str:
-        """裸聊天入口：供拆解引擎（框架内部组件）复用同一适配器。"""
+        """纯文本聊天入口：供拆解引擎（框架内部组件）复用同一适配器。"""
         resp = self._client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],

@@ -71,7 +71,7 @@ class TestMetricsCollector:
         assert run.tasks_skipped == 1
 
     def test_concurrent_runs_isolated(self):
-        """两个 run 的指标互不串扰（按 run_id 隔离）。"""
+        """两个 run 的指标互不干扰（按 run_id 隔离）。"""
         m = MetricsCollector()
         m.begin_run("r1", 1)
         m.begin_run("r2", 1)

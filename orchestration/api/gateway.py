@@ -2,7 +2,7 @@
 
 形态：FastAPI REST。职责：目标拆解（规划层 → DAG）、提交 DAG（可选带原始
 目标）、查询进度、获取结果/审计、取消 run、查看 agent 注册表快照。协议面
-保持"框架永远主动"——网关只受理框架自己的请求，agent 侧的协议通信仍在
+保持"框架单向发起"——网关只受理框架自己的请求，agent 侧的协议通信仍在
 适配器层，不暴露到 HTTP。
 
 RunManager 管理 run 生命周期（run_id → 后台 asyncio.Task + 状态快照），
@@ -11,16 +11,16 @@ RunManager 管理 run 生命周期（run_id → 后台 asyncio.Task + 状态快�
 反思/判定，advisory——只写报告，不改状态不阻断）。
 
 **学习层闭环**：run 收尾时对同一份报告做确定性复盘——审计对账 →
-成本归集 → 规则提取（含判定结论），产物挂回报告；启用存储时规则落盘成
+成本归集 → 规则提取（含判定结论），产物附载回报告；启用存储时规则落盘成
 **跨 run 经验库**，并经 `lessons.PromptAdvisor` 回馈拆解提示词
 （见 `decomposer.Decomposer(guidance_provider=...)`）。
 
 **运行存档 + 接入层 Web**：启用存储时，run 的**过程事件流**（状态变更逐条
-落盘）与**终态报告**即运行存档（持久化底座、唯一真源）；网关另行提供
+落盘）与**终态报告**即运行存档（持久化底座、唯一权威来源）；网关另行提供
 **运行枚举**（`/api/runs`）、**人读投影**（`/api/runs/{id}/view`，确定性、
 按需渲染）、**叙述摘要**（`/api/runs/{id}/narrative`，LLM 非确定、显式触发）
-与**服务端渲染的 Web 页面**（`/` 列表 + `/runs/{id}` 详情，同源、零构建、
-零 CORS）。人读版是存档的读时投影，不落盘成第二份真相。
+与**服务端渲染的 Web 页面**（`/` 列表 + `/runs/{id}` 详情，同源、无需构建工具链、
+无跨域）。人读版是存档的读时投影，不落盘成第二份权威来源。
 """
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ class RunHandle:
     finished_at: str = ""
     task: Optional[asyncio.Task] = None
     reflection_obj: Optional[ReflectionReport] = None
-    """判定结论对象（喂学习层 JUD-* 规则；报告里是 dict 形态）。"""
+    """判定结论对象（供学习层消费 JUD-* 规则；报告里是 dict 形态）。"""
 
 
 class RunManager:
@@ -113,7 +113,7 @@ class RunManager:
         """提交 DAG 并立即返回 run_id（后台执行）。
 
         goal：用户原始目标（可选）——提交时给定后随 run 持久化，收尾时作为
-        反思/判定的基准。直接提交现成 DAG（未走拆解）且不传时无基准，判定跳过。
+        反思/判定的基准。直接提交既有 DAG（未走拆解）且不传时无基准，判定跳过。
         """
         rid = run_id or uuid.uuid4().hex[:12]
         if rid in self._runs:
@@ -142,7 +142,7 @@ class RunManager:
             await self._attach_reflection(handle)
             self._attach_learning(handle)
             handle.status = "done"
-        except Exception as e:  # 调度器异常兜底（不应发生，防御）
+        except Exception as e:  # 调度器异常防御处理（不应发生，防御）
             handle.error = str(e)
             handle.status = "failed"
             log_event("run_error", run_id=handle.run_id, error=str(e))
@@ -179,7 +179,7 @@ class RunManager:
         """学习层闭环：对同一份报告做确定性复盘 → 落盘经验库 → 回馈拆解。
 
         ① 审计对账（只读、纯函数、结论可重放）→ ② 成本归集 → ③ 规则提取（含判定结论
-        JUD-*）→ ④ 挂回报告 + 落盘为**跨 run 经验库**（回馈拆解提示词在
+        JUD-*）→ ④ 附载回报告 + 落盘为**跨 run 经验库**（回馈拆解提示词在
         拆解侧经 PromptAdvisor 读取）。
 
         学习层是复盘、不是主链路：任何异常都不得影响 run 收尾（防御）。
@@ -329,9 +329,9 @@ class RunManager:
         }
 
     def lessons_snapshot(self, limit: int = 20) -> dict:
-        """跨 run 经验库视图（学习层闭环的"记忆"出口）。
+        """跨 run 经验库视图（学习层闭环的"记忆"接口）。
 
-        聚合口径：同 rule_id 跨 run 命中次数 / 贡献 run 数 / 最高 severity /
+        聚合方式：同 rule_id 跨 run 命中次数 / 贡献 run 数 / 最高 severity /
         最近一次的证据——复现次数即"客观支撑"的强度。
         """
         if self._store is None:
@@ -350,7 +350,7 @@ class RunManager:
     # ---------- 运行存档：读回 / 枚举 / 人读投影 / 叙述摘要 ----------
 
     def list_runs(self, limit: int = 50) -> list[dict]:
-        """运行枚举（最近在前）。持久化底座优先，内存中的运行中 run 兜底纳入。"""
+        """运行枚举（最近在前）。持久化底座优先，内存中的运行中 run 补充纳入。"""
         out: list[dict] = []
         seen: set[str] = set()
         if self._store is not None:
@@ -403,7 +403,7 @@ class RunManager:
         }
 
     def archive_view(self, run_id: str) -> dict:
-        """运行存档的人读投影（确定性、按需渲染，不落盘成第二份真相）。"""
+        """运行存档的人读投影（确定性、按需渲染，不落盘成第二份权威来源）。"""
         arch = self._load_archive(run_id)
         if arch is None:
             raise HTTPException(status_code=404, detail=f"run 不存在：{run_id}")
@@ -414,7 +414,7 @@ class RunManager:
         )
 
     async def narrate(self, run_id: str) -> dict:
-        """显式生成叙述摘要（LLM 产出、非确定、单独留痕）——不默认生成。"""
+        """显式生成叙述摘要（LLM 产出、非确定、单独记录）——不默认生成。"""
         if self._narrator is None:
             raise HTTPException(
                 status_code=400,
@@ -485,7 +485,7 @@ class RunManager:
             await self._attach_reflection(handle)
             self._attach_learning(handle)
             handle.status = "done"
-        except Exception as e:  # 调度器异常兜底（防御）
+        except Exception as e:  # 调度器异常防御处理（防御）
             handle.error = str(e)
             handle.status = "failed"
             log_event("run_error", run_id=handle.run_id, error=str(e))
@@ -581,7 +581,7 @@ class RunManager:
         }
 
     def metrics_snapshot(self, run_id: str) -> dict:
-        """run 的运行指标（可观测性出口）。"""
+        """run 的运行指标（可观测性接口）。"""
         m = self._metrics.run(run_id)
         if m is None:
             raise HTTPException(status_code=404, detail="metrics 不存在")
@@ -639,7 +639,7 @@ class DagSubmit(BaseModel):
     goal: Optional[str] = Field(
         default=None,
         description="用户原始目标（可选）——收尾时作为反思/判定的基准；"
-                    "直接提交现成 DAG 时建议一并给出",
+                    "直接提交既有 DAG 时建议一并给出",
     )
 
 
@@ -689,7 +689,7 @@ def create_app(
         version="0.1.0",
     )
 
-    # ---------- 接入层 Web 页面（服务端渲染；同源、零构建、零 CORS）----------
+    # ---------- 接入层 Web 页面（服务端渲染；同源、无需构建工具链、无跨域）----------
 
     @app.get("/", response_class=HTMLResponse)
     async def index_page() -> HTMLResponse:
@@ -751,7 +751,7 @@ def create_app(
 
     @app.post("/api/runs/{run_id}/narrative")
     async def run_narrative(run_id: str) -> dict:
-        """显式生成叙述摘要（LLM 产出、非确定、单独留痕）——不默认生成。"""
+        """显式生成叙述摘要（LLM 产出、非确定、单独记录）——不默认生成。"""
         return await manager.narrate(run_id)
 
     @app.get("/api/runs/{run_id}/metrics")
@@ -813,7 +813,7 @@ def _dependency_analysis(dag: DAG) -> dict:
 
 
 def _error_page(run_id: str, detail: str) -> str:
-    """Web 详情页的错误呈现（不返回裸 JSON）。"""
+    """Web 详情页的错误呈现（不返回未包装的 JSON）。"""
     import html as _h
     return (
         '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/>'

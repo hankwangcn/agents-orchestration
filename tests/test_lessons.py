@@ -5,7 +5,7 @@
 - 证据强度分级（objective 确定性事实 / judgment LLM 判定），禁止同级呈现
 - 经验库：落盘幂等、跨 run 聚合（命中次数 / 贡献 run 数 / 最高 severity /
   最近证据）
-- PromptAdvisor：注册表客观事实、复现门槛（跨 run 才写进提示词）、
+- PromptAdvisor：注册表客观事实、复现门槛（跨 run 才写入提示词）、
   判定结论单独成节、条数上限、全空则不污染提示词
 - Decomposer 指导块注入：前缀/结尾结构稳定、无 provider 行为不变、
   provider 故障退化
@@ -134,7 +134,7 @@ class TestLessonPersistence:
                                        message="m"))
         store.save_lessons("r1", rep)
         store.save_lessons("r1", rep)
-        assert len(store.load_lessons()) == 1  # 同 run 重跑覆盖，不重复计数
+        assert len(store.load_lessons()) == 1  # 同 run 重新执行覆盖，不重复计数
 
     def test_empty_report_clears_run_rows(self, tmp_path):
         store = SqliteStateStore(str(tmp_path / "s.db"))
@@ -228,7 +228,7 @@ class TestDigestAggregation:
 
 
 # ---------------------------------------------------------------------------
-# PromptAdvisor（闭环出口）
+# PromptAdvisor（闭环回馈点）
 # ---------------------------------------------------------------------------
 
 class _Lessons:
@@ -264,7 +264,7 @@ class TestPromptAdvisor:
         assert PromptAdvisor(None, None).guidance() == ""
 
     def test_lessons_need_cross_run_recurrence(self):
-        """单次出现不写进提示词——"客观支撑"即跨 run 复现。"""
+        """单次出现不写入提示词——"客观支撑"即跨 run 复现。"""
         one = [row("FP-boom", "r1", message="错误码 boom 反复出现", action="换 agent")]
         adv = PromptAdvisor(None, _Lessons(one), min_occurrences=2)
         assert "FP-boom" not in adv.guidance()
@@ -297,7 +297,7 @@ class TestPromptAdvisor:
         assert adv.guidance() == ""
 
     def test_non_prompt_categories_excluded(self):
-        """框架自身问题（断链 REC-1）不是拆解指导，不进提示词。"""
+        """框架自身问题（链路中断 REC-1）不是拆解指导，不进提示词。"""
         rows = [row("REC-1", "r1", category="reconciliation", severity="high"),
                 row("REC-1", "r2", category="reconciliation", severity="high")]
         adv = PromptAdvisor(None, _Lessons(rows), min_occurrences=1)
@@ -376,12 +376,12 @@ class TestDecomposerGuidanceInjection:
 
     def test_provider_failure_degrades_to_no_guidance(self):
         def boom():
-            raise RuntimeError("经验库挂了")
+            raise RuntimeError("经验库故障")
 
         llm = ScriptedLLM(VALID)
         dec = Decomposer(llm, guidance_provider=boom)
         dag = dec.decompose("目标X")
-        assert set(dag.tasks) == {"t1", "t2"}  # 拆解照常
+        assert set(dag.tasks) == {"t1", "t2"}  # 拆解正常
         assert dec.last_guidance == ""
         assert llm.prompts[0] == f"{DECOMPOSITION_PROMPT}\n\n用户目标：目标X"
 

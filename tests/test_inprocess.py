@@ -1,7 +1,7 @@
-"""进程内适配器测试：同进程 Python agent 免 HTTP（架构 §3.2 / 协议 §8）。
+"""进程内适配器测试：同进程 Python agent 不经 HTTP（架构 §3.2 / 协议 §8）。
 
 覆盖：str / dict 两种返回形态、解析重试（杂文→附正确示例）、
-info_request 能力采集入库、AsyncScheduler 免 HTTP 全流程、异常传播。
+info_request 能力采集入库、AsyncScheduler 不经 HTTP 全流程、异常传播。
 """
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def test_run_task_dict_response():
 
 
 # ---------------------------------------------------------------------------
-# 解析层兜底（与 HTTP agent 完全一致）
+# 解析容错（与 HTTP agent 完全一致）
 # ---------------------------------------------------------------------------
 
 def test_nonsense_then_retry():
@@ -112,7 +112,7 @@ def test_fn_exception_propagates():
 
 
 # ---------------------------------------------------------------------------
-# 注册表集成：能力采集 + 并发调度全流程（免 HTTP）
+# 注册表集成：能力采集 + 并发调度全流程（不经 HTTP）
 # ---------------------------------------------------------------------------
 
 def make_info_agent(model: str):
@@ -135,7 +135,7 @@ def make_info_agent(model: str):
 
 
 def test_registry_collect_inprocess():
-    """进程内 agent 照常被 info_request 采集——能力是问出来的。"""
+    """进程内 agent 正常被 info_request 采集——能力经信息请求采集。"""
     reg = AgentRegistry()
     reg.register(make_info_agent("local-a"), agent_id="a")
     reg.register(make_info_agent("local-b"), agent_id="b")
@@ -149,7 +149,7 @@ def test_registry_collect_inprocess():
 
 
 def test_async_scheduler_full_flow_inprocess():
-    """AsyncScheduler + 进程内 agent：DAG 全流程免 HTTP 跑通。"""
+    """AsyncScheduler + 进程内 agent：DAG 全流程不经 HTTP 完成。"""
     reg = AgentRegistry()
     reg.register(make_info_agent("local-a"), agent_id="a")
     reg.register(make_info_agent("local-b"), agent_id="b")

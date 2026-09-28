@@ -1,7 +1,7 @@
 """DeepSeek 适配器测试（mock API 响应，不真实调用）。
 
 覆盖：真实元数据回填（usage/token/耗时）——冒烟实测发现真实 LLM
-不自报 usage，由 adapter 从 API 响应捕获（协议 §4.2 兜底）。
+不自报 usage，由 adapter 从 API 响应捕获（协议 §4.2 回退）。
 """
 import json
 from types import SimpleNamespace
@@ -84,7 +84,7 @@ def test_agent_reported_usage_overwritten_by_api(monkeypatch):
 
 
 def test_missing_key_raises(monkeypatch):
-    """无 key 且环境变量缺失 → 明确报错。"""
+    """无 key 且环境变量缺失 → 明确错误信息。"""
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
         DeepSeekAdapter(api_key=None)

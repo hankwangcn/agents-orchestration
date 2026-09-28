@@ -57,7 +57,7 @@ class TextAdapter(AgentAdapter):
 
 
 class SlowAdapter(AgentAdapter):
-    """判定调用挂住（验证框架侧 wall-clock 超时）。"""
+    """判定调用无响应（验证框架侧 wall-clock 超时）。"""
 
     def __init__(self, delay: float = 0.5, model: str = "slow-model"):
         super().__init__(model=model)
@@ -156,7 +156,7 @@ class TestReflectorSelection:
         assert out.reasons and out.gaps == []
 
     def test_self_judge_marked_non_independent(self):
-        """无判定 agent 但允许自判 → 跑，但报告标记 non-independent。"""
+        """无判定 agent 但允许自判 → 执行，但报告标记 non-independent。"""
         adapter = TextAdapter([verdict_text("reflection:r1")])
         reg, aid = make_registry(adapter, judge=False)
         out = asyncio.run(Reflector(reg).areflect(_GOAL, reference_report(), "r1"))
@@ -290,16 +290,16 @@ class TestReflectorFailures:
         assert out.ok is True and out.achieved is True
 
     def test_timeout_does_not_raise(self):
-        """判定挂死 → 框架侧 wall-clock 超时 → error_code=timeout。"""
+        """判定无响应 → 框架侧 wall-clock 超时 → error_code=timeout。"""
         reg, _ = make_registry(SlowAdapter(delay=0.5))
         reflector = Reflector(reg, timeout_seconds=0.05, allow_self_judge=True)
         start = time.monotonic()
         out = asyncio.run(reflector.areflect(_GOAL, reference_report(), "r1"))
         assert out.error_code == "timeout"
-        assert time.monotonic() - start < 0.45  # 未被慢调用拖住
+        assert time.monotonic() - start < 0.45  # 未被慢调用阻塞
 
     def test_verdict_schema_shape(self):
-        """判定结构契约：全字段必需（框架侧强校验口径）。"""
+        """判定结构契约：全字段必需（框架侧强校验定义）。"""
         assert set(VERDICT_SCHEMA) == {"achieved", "score", "reasons", "gaps"}
         assert VERDICT_SCHEMA["achieved"] == "boolean"
         assert VERDICT_SCHEMA["reasons"] == ["string"]

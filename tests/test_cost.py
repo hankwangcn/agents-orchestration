@@ -1,6 +1,6 @@
 """成本核算测试（阶段二，治理层 OB）。
 
-覆盖：按 agent / 匹配类型归集、失败成本、剪枝已发生消耗（§5.4 口径）、
+覆盖：按 agent / 匹配类型归集、失败成本、剪枝已发生消耗（§5.4 定义）、
 预算超支判定（声明 0 不判）、平均成本。
 """
 from orchestration.cost import CostAccountant
@@ -20,7 +20,7 @@ from test_scheduler import ScriptedAdapter, dag_of, fail, ok
 
 def run_account(dag: DAG, script: dict, retries=2, budget: dict | None = None,
                 model="deepseek-chat") -> tuple:
-    """跑调度 → 核算。返回 (CostReport, AgentRegistry)。"""
+    """执行调度 → 核算。返回 (CostReport, AgentRegistry)。"""
     adapter = ScriptedAdapter(script, model=model)
     reg = AgentRegistry()
     reg.register(adapter)

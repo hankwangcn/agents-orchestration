@@ -162,7 +162,7 @@ class TestQuery:
         out = capsys.readouterr().out
         assert "final_status: success" in out
         assert "总成本" in out
-        assert "分配留痕" in out and "exact" in out
+        assert "分配记录" in out and "exact" in out
 
     def test_report_prune_root_reason(self, capsys):
         """剪枝根因打印 task_id + reason（曾读错 key，错误码恒空）。"""
@@ -418,7 +418,7 @@ class TestLearningLoopOutput:
         assert "成本：总 $0.02" in out and "超预算 agent 1 个" in out
         assert "学习：2 条规则（客观 1 / 判定 1）" in out
         assert "FP-boom" in out and "判定" in out          # 分级可见
-        assert "ao lessons" in out                         # 指引经验库出口
+        assert "ao lessons" in out                         # 指引经验库接口
 
     def test_report_without_learning_quiet(self, capsys):
         """未产出学习产物 → 报告不打印对应块（保持既有输出）。"""
@@ -456,7 +456,7 @@ class TestLearningLoopOutput:
 
 
 class TestArchiveOutput:
-    """运行存档出口（#48/#49）：`ao runs` 枚举 + `ao view` 人读视图 + `ao narrate`。"""
+    """运行存档接口（#48/#49）：`ao runs` 枚举 + `ao view` 人读视图 + `ao narrate`。"""
 
     RUNS = {"runs": [
         {"run_id": "r1", "goal": "整理比价报告", "run_status": "success",

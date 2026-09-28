@@ -1,4 +1,4 @@
-"""DAG 调度器（架构 §3.2）：拓扑派发 + 失败传播 + 死任务剪枝。
+"""DAG 调度器（架构 §3.2）：拓扑派发 + 失败传播 + 失效任务剪枝。
 
 - 只认拓扑序：in-degree=0（依赖全部 success）的任务可派发
 - 结果导向：派发后只等结果，不监控过程（D3）
@@ -6,7 +6,7 @@
   → 对剪枝时仍在运行的任务下发取消（best-effort，架构 §5.3）
 - 竞态（§5.3）：剪枝后重新计算可派发集合，天然冻结被剪任务的派发
 - 框架侧 wall-clock 超时：单次执行超过 required_resources.timeout 即判
-  失败（agent 挂死不再永久占住调度资源），产出 Result 汇入既有重试/
+  失败（agent 无响应不再永久占住调度资源），产出 Result 汇入既有重试/
   剪枝链路
 """
 from __future__ import annotations
@@ -85,7 +85,7 @@ class Scheduler:
                 if result.success:
                     continue
 
-                # 重试耗尽 → 失败传播 + 死任务剪枝（架构 §5.2）
+                # 重试耗尽 → 失败传播 + 失效任务剪枝（架构 §5.2）
                 report = dag.prune_after_failure(tid)
                 prune_reports.append(report)
                 self._dispatch_cancels(dag, report)
@@ -118,7 +118,7 @@ class Scheduler:
             timeout = task.required_resources.timeout
             try:
                 if timeout and timeout > 0:
-                    # 框架侧 wall-clock 超时（与 AsyncScheduler 同口径）
+                    # 框架侧 wall-clock 超时（与 AsyncScheduler 一致）
                     result = call_with_timeout(
                         lambda: adapter.run_task(
                             task, request_id=request_id, inputs=inputs
@@ -175,7 +175,7 @@ class Scheduler:
 
         契约预留：同步模型逐任务串行执行，剪枝时不存在 RUNNING 任务，
         故当前无调用点会真正进入循环体——保留以与 AsyncScheduler 的取消
-        口径对齐（异步路径见 scheduler_async._send_cancel）。
+        语义对齐（异步路径见 scheduler_async._send_cancel）。
         """
         for tid in tids:
             agent_id = self._task_agent.get(tid)

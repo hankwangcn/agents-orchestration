@@ -5,7 +5,7 @@ Result 是框架一切逻辑的枢纽——审计、资源统计、失败处理�
 
 依赖分析（纯结构图算法：可达性 / 拓扑序 / 并行前沿 / 校验）已独立成
 `dependency.DependencyGraph`（架构 §3.2 规划层"依赖分析"）；此处的 DAG
-保留同名方法作**薄委托**（调用点零改动）+ 调度期状态操作（就绪集 / 剪枝）。
+保留同名方法作**薄委托**（调用点无改动）+ 调度期状态操作（就绪集 / 剪枝）。
 """
 from __future__ import annotations
 
@@ -101,14 +101,14 @@ class Task(BaseModel):
 
 
 class PruneReport(BaseModel):
-    """剪枝取消报告（架构 §5.4）：同时喂给审计与自我学习。"""
+    """剪枝取消报告（架构 §5.4）：同时供审计与自我学习消费。"""
     root_failure: dict
     pruned: list[dict]
     pruned_final: bool
 
 
 class Assignment(BaseModel):
-    """一次任务分配的留痕（审计/自我学习素材，阶段二消费）。
+    """一次任务分配的记录（审计/自我学习素材，阶段二消费）。
 
     阶段三起由注册表产出，随 ScheduleReport 交付。
     """
@@ -122,7 +122,7 @@ class Assignment(BaseModel):
 class DAG(BaseModel):
     """依赖 DAG（架构 §4.3）：节点 = 任务，边 = 数据流依赖。
 
-    调度器只认拓扑序（in-degree=0 可派发）；失败传播与死任务剪枝
+    调度器只认拓扑序（in-degree=0 可派发）；失败传播与失效任务剪枝
     均在此做图算法（架构 §5.2）。DAG 是数据流依赖，不是运行时状态。
     """
     tasks: dict[str, Task] = Field(default_factory=dict)
@@ -222,13 +222,13 @@ class DAG(BaseModel):
 
 
 class ScheduleReport(BaseModel):
-    """一次 DAG 调度的收尾报告（结果 + 剪枝报告 + 分配留痕 + 成本）。
+    """一次 DAG 调度的收尾报告（结果 + 剪枝报告 + 分配记录 + 成本）。
 
     阶段一同步调度器与阶段四异步调度器共用此契约；
     审计器 / 成本核算 / 学习引擎统一消费它。
     final_status：success | partial | failed | cancelled（阶段四外部取消）。
     reflection：治理层判定结论（反思/判定模块产出，advisory）——未启用
-    判定或无原始目标时为 None；运行级，挂在报告上供审计/学习/人工消费。
+    判定或无原始目标时为 None；运行级，附于报告供审计/学习/人工消费。
     audit / cost / learning：治理层与学习层在 run 收尾时对同一份报告的
     确定性复盘（审计对账 / 成本归集 / 规则提取）——同步调度器与库内直调用
     不产出，故为 None；网关收尾时填写，供报告查询与经验库落盘。

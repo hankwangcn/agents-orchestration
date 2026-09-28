@@ -3,7 +3,7 @@
 验证链路：注册 → info_request 能力采集（真实 HTTP 发现 judge 能力）→
 提交带 goal 的 run（RunManager，真实 HTTP 执行）→ run 收尾判定
 （DeepSeekAdapter 走真实 HTTP 打 mock judge 角色：协议装配 + output_schema
-强校验 + 解析 + usage 真实回填）→ 判定结论进报告 → 喂学习层 JUD-1。
+强校验 + 解析 + usage 真实回填）→ 判定结论进报告 → 供学习层消费 JUD-1。
 
 同时验证 advisory 边界与跳过分支：
 - 判定不改任务状态、不阻断交付（final_status 仍按调度结果）
@@ -76,7 +76,7 @@ async def main() -> int:
         summary = await registry.aensure_fresh()
         judge_agent = registry.get("judge")
         print(f"   采集 {len(summary)} 条；judge.capabilities = {judge_agent.capabilities}")
-        results.append(check("judge 能力被问出来（capability 采集）",
+        results.append(check("judge 能力经采集获得（capability 采集）",
                              "judge" in judge_agent.capabilities))
 
         manager = RunManager(registry=registry, reflector=Reflector(registry))
@@ -120,7 +120,7 @@ async def main() -> int:
                              f"total={report.total_cost} tasks={round(task_cost, 4)} "
                              f"judge={ref['cost']}"))
 
-        print("\n== 4. 判定结论喂学习层 ==")
+        print("\n== 4. 判定结论供学习层消费 ==")
         audit = Auditor().audit(report)
         cost = CostAccountant(registry).account(report)
         learned = LearningEngine().learn(audit, cost, _to_report(ref))
@@ -135,7 +135,7 @@ async def main() -> int:
         report2 = await manager.wait(run_id2)
         ref2 = report2.reflection
         print(f"   enabled={ref2['enabled']} skipped_reason={ref2['skipped_reason']}")
-        results.append(check("无目标 → 跳过判定（记原因，不报错）",
+        results.append(check("无目标 → 跳过判定（记录原因，不作为错误）",
                              ref2["enabled"] is False
                              and ref2["skipped_reason"] == "no_goal"))
         results.append(check("跳过的 run 正常收尾",

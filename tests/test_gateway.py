@@ -324,7 +324,7 @@ class TestGoalAndReflection:
         reg = AgentRegistry()
         reg.register(main)
         reg.register(judge, agent_id="judge_bot")
-        reg.get("judge_bot").capabilities = ["judge"]  # 能力是问出来的/采集的
+        reg.get("judge_bot").capabilities = ["judge"]  # 能力经信息请求采集
         return RunManager(registry=reg, reflector=Reflector(reg)), reg
 
     @staticmethod
@@ -359,7 +359,7 @@ class TestGoalAndReflection:
         assert report.total_cost == 0.02       # 判定成本单列，不计入任务成本
 
     def test_no_goal_skips_reflection(self):
-        """未给 goal → 无基准可判，跳过（记录原因，不报错）。"""
+        """未给 goal → 无基准可判，跳过（记录原因，不作为错误）。"""
         manager, _ = self._manager()
 
         async def _flow():
@@ -433,7 +433,7 @@ class TestArchiveAndWeb:
     """运行存档闭环 + 接入层 Web 页面（#48/#49）。
 
     覆盖：过程事件流落盘、报告读回（进程重启后）、运行枚举、人读投影端点、
-    Web 页面（列表 + 详情）、叙述摘要（显式触发、非确定、单独留痕）。
+    Web 页面（列表 + 详情）、叙述摘要（显式触发、非确定、单独记录）。
     """
 
     @staticmethod
@@ -549,7 +549,7 @@ class TestArchiveAndWeb:
             assert "text/html" in page.headers["content-type"]
             assert "过程时间线" in page.text and rid in page.text
 
-            # 未知 run → 错误页（非裸 JSON）
+            # 未知 run → 错误页（非未包装的 JSON）
             missing = client.get("/runs/nope")
             assert missing.status_code == 404
             assert "text/html" in missing.headers["content-type"]
@@ -589,7 +589,7 @@ class TestArchiveAndWeb:
             assert body["source"] == "llm" and body["deterministic"] is False
             assert "比价报告" in body["text"]
             assert body["text"] == body["text"].strip()  # 已去空白
-            # 单独留痕
+            # 单独记录
             saved = store.load_narrative(rid)
             assert saved["text"] == body["text"] and saved["model"] == "fake-narrator"
             # 视图里作为独立字段出现（不并入确定性内容）

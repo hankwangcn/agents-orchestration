@@ -1,15 +1,15 @@
-"""进程内适配器：同进程 Python agent 免 HTTP 接入（架构 §3.2 / 协议 §8）。
+"""进程内适配器：同进程 Python agent 不经 HTTP 接入（架构 §3.2 / 协议 §8）。
 
 场景：agent 就是本项目进程里的一个 Python 函数/可调用对象——
 再为它起 HTTP 服务是纯开销（序列化 + 网络往返只为调一个本地函数）。
 InProcessAdapter 把"调用"直接接到本地函数上，协议装配 / 双层校验解析 /
-解析重试 / 成本回填全部复用 AgentAdapter 基类，传输层零成本。
+解析重试 / 成本回填全部复用 AgentAdapter 基类，传输层无额外成本。
 
 与 HTTP adapter（DeepSeekAdapter）完全对等：
 - 注册进 AgentRegistry 后，info_request 能力采集、三级分配、
-  per-agent 并发上限、连续失败摘除…… 全部照常工作；
+  per-agent 并发上限、连续失败摘除…… 全部正常工作；
 - 唯一的区别是没有网络往返——协议约束（输出合法 JSON）依然由
-  基类解析层强制，稳定性兜底一个不少。
+  基类解析层强制，稳定性保障机制完整保留。
 
 两种返回形态（fn 二选一）：
 - 返回 str  —— 按协议原样进入解析层（推荐：与真实 agent 行为一致，
@@ -30,7 +30,7 @@ AgentFn = Callable[[list[dict]], Union[str, dict]]
 
 
 class InProcessAdapter(AgentAdapter):
-    """对接同进程 Python 函数（免 HTTP 传输）。
+    """对接同进程 Python 函数（不经 HTTP 传输）。
 
     fn 签名：fn(messages) -> str | dict
     - messages：协议装配后的消息列表（system + user，含模板/请求 JSON/输入）

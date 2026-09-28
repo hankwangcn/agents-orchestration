@@ -1,9 +1,9 @@
 """任务分配 / 资源协调（架构 §3.2 **调度层「资源协调器」**；阶段三）。
 
-三级分配策略，全程留痕（`Assignment`）：
+三级分配策略，全程记录（`Assignment`）：
 1. exact      —— task.model 精确匹配（同 model 多实例轮询）
 2. capability —— 无 exact 时按能力标签匹配（部分覆盖标记 risk）
-3. degraded   —— 无匹配降级到默认通用 LLM（显式留痕，不静默消化）
+3. degraded   —— 无匹配降级到默认通用 LLM（显式记录，不静默接受）
 
 多 agent 资源协调：连续失败达到阈值自动摘除（unavailable），不再参与分配。
 
@@ -38,7 +38,7 @@ class Allocator:
 
         1. exact：task.model 精确匹配（available 实例，同 model 轮询）
         2. capability：按 required_capabilities 匹配（部分覆盖标记 risk）
-        3. degraded：降级默认通用 LLM（显式留痕）
+        3. degraded：降级默认通用 LLM（显式记录）
         """
         agents = self._pool.agents
         model = task.required_resources.model
@@ -90,7 +90,7 @@ class Allocator:
                     best.adapter,
                 )
 
-        # 3. 降级：默认通用 LLM 优先；默认不可用则任意可用 agent 兜底
+        # 3. 降级：默认通用 LLM 优先；默认不可用则任意可用 agent 回退
         #    （默认 agent 被摘除不应导致系统瘫痪）；全部不可用才抛错
         fallback: Optional[RegisteredAgent] = None
         default_id = self._pool.default_id

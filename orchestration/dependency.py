@@ -13,7 +13,7 @@
 - DAG 调度器（调度层）：`topological_order()` / `levels()`（并行前沿）；
 - 失败处理器（调度层）：`reverse_reachable()` 是反向可达剪枝的判据（§5.2）。
 
-构造零成本（仅建一张邻接表），故各调用点按需即时构造，无需缓存。
+构造无额外成本（仅建一张邻接表），故各调用点按需即时构造，无需缓存。
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class DependencyError(ValueError):
     """依赖结构非法：引用不存在的任务 / 成环 / 无最终交付任务。
 
     继承 ValueError，使调用方既有的 ``except (ResponseValidationError,
-    ValueError)`` 兜底口径保持不变。
+    ValueError)`` 兼容捕获方式保持不变。
     """
 
 
@@ -48,7 +48,7 @@ class DependencyGraph:
         self._children: dict[str, list[str]] = {tid: [] for tid in self._tasks}
         for tid, t in self._tasks.items():
             for d in t.deps:
-                if d in self._children:  # 幽灵引用由 validate_edges() 另行报错
+                if d in self._children:  # 幽灵引用由 validate_edges() 另行报告错误
                     if tid not in self._children[d]:
                         self._children[d].append(tid)
 
@@ -184,7 +184,7 @@ class DependencyGraph:
     def validate(self, require_final: bool = True) -> None:
         """结构合法性总校验：引用存在 → 无环 → 至少一个最终交付任务。
 
-        拆解引擎在把 LLM 输出转成 DAG 后调用（不合格即拒绝并重试）。
+        拆解引擎在把 LLM 输出转换为 DAG 后调用（不合格即拒绝并重试）。
         """
         self.validate_edges()
         self.topological_order()

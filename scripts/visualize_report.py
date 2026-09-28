@@ -12,7 +12,7 @@
   2. DAG 全景图（SVG）：节点=任务（颜色=最终状态），边=依赖，
      标注 agent 分配 / 匹配类型 / risk / 剪枝原因 / 失败根
   3. Agent 阵容（声明 vs 观测：调用次数 / 并发峰值 / 摘除状态）
-  4. 分配留痕表（三级策略 exact / capability / degraded）
+  4. 分配记录表（三级策略 exact / capability / degraded）
   5. 失败传播与剪枝明细
   6. 治理层（审计 / 成本归集 / 学习规则）
 """
@@ -388,7 +388,7 @@ def render_smoke_report(*, report: Any, agent_meta: dict, agent_stats: dict,
     ) + (
         '<span class="lg muted">虚线边框 = 被剪枝（✂）　</span>'
         '<span class="lg muted">红色粗边 = 失败根（✕）　</span>'
-        '<span class="lg muted">⚠ = 能力风险留痕</span>'
+        '<span class="lg muted">⚠ = 能力风险记录</span>'
     )
 
     html = f"""<!DOCTYPE html>
@@ -442,7 +442,7 @@ def render_smoke_report(*, report: Any, agent_meta: dict, agent_stats: dict,
 <div class="card"><h2>DAG 执行全景</h2><div class="svgbox">{svg}</div>
 <div style="margin-top:10px">{legend}</div></div>
 <div class="card"><h2>Agent 阵容（声明 vs 观测）</h2>{_agent_table(agent_meta, agent_stats)}</div>
-<div class="card"><h2>分配留痕（三级策略）</h2>{_assign_table(report.assignments)}</div>
+<div class="card"><h2>分配记录（三级策略）</h2>{_assign_table(report.assignments)}</div>
 <div class="card"><h2>失败传播与剪枝</h2>{_prune_section(report)}</div>
 <div class="card"><h2>治理层</h2>{_governance_section(audit, cost, learned)}</div>
 <footer>由 scripts/smoke_multiagent.py --visual 生成 ·

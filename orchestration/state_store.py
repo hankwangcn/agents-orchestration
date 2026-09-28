@@ -10,19 +10,19 @@
     最坏损失一次成本；恢复后任务 attempt 语义由调度器重试计数表达）
   - RUNNING + 声明副作用 → 置 INTERRUPTED **不自动重派**（重派 = 副作用
     可能执行两次，不可逆），等人工 resolve（complete / cancel / retry）
-  - 已终态任务 → 保留（结果/成本/审计记录直接复用，不重跑不重计费）
+  - 已终态任务 → 保留（结果/成本/审计记录直接复用，不重新执行、不重复计费）
 
 存储格式：整 DAG JSON（任务数小，整存简单可靠）+ assignments 表 +
 prune_reports（随 run 行存）+ learning_lessons 表（学习层经验库——跨 run
 记忆，回馈拆解提示词）+ run_events 表（**过程归档**：状态变更逐条落盘的
-事件流）+ run_narratives 表（人读叙述摘要，**非确定**、显式生成、单独留痕）。
-SQLite 单文件、零依赖；可换 Postgres（StateStore 抽象，实现同签名即可——
+事件流）+ run_narratives 表（人读叙述摘要，**非确定**、显式生成、单独记录）。
+SQLite 单文件、无外部依赖；可换 Postgres（StateStore 抽象，实现同签名即可——
 经验库、事件流、叙述摘要均为可选能力，未实现则各自退化）。
 
 **归档分层（对话共识）**：运行存档 = 过程（事件流）+ 终态报告（report_json），
-属**持久化底座**（state face），是唯一真源、单 run 不可变；治理层是其生产者
-之一（审计/成本/判定挂回报告），学习层是消费者（读同一份 → 经验库）。人读版
-是**读时投影**（按需渲染，不落盘成第二份真相）。
+属**持久化底座**（state face），是唯一权威来源、单 run 不可变；治理层是其生产者
+之一（审计/成本/判定附载回报告），学习层是消费者（读同一份 → 经验库）。人读版
+是**读时投影**（按需渲染，不落盘成第二份权威来源）。
 """
 from __future__ import annotations
 
@@ -118,7 +118,7 @@ class StateStore(ABC):
     # -- 经验库（学习层闭环：跨 run 记忆；可选能力，默认退化为无记忆）--
 
     def save_lessons(self, run_id: str, report: object) -> None:
-        """落盘一次 run 的学习规则（幂等：同 run 重跑覆盖）。
+        """落盘一次 run 的学习规则（幂等：同 run 重新执行覆盖）。
 
         存储实现未支持经验库时退化为 no-op——学习层仍产出报告，只是没有
         跨 run 记忆（提示词回馈退化为仅注册表事实）。
@@ -141,7 +141,7 @@ class StateStore(ABC):
     ) -> None:
         """追加一条过程事件（状态变更逐条落盘，run 内时序可回放）。
 
-        未支持事件流的实现退化为 no-op——run 照常收尾，只是过程不可回放。
+        未支持事件流的实现退化为 no-op——run 正常收尾，只是过程不可回放。
         """
         return None
 
@@ -152,7 +152,7 @@ class StateStore(ABC):
     def load_report(self, run_id: str) -> Optional[dict]:
         """读回已落盘的终态报告（dict）；未落盘或未支持返回 None。
 
-        进程重启后运行存档仍可读——这是人读投影（按需渲染）的唯一真源。
+        进程重启后运行存档仍可读——这是人读投影（按需渲染）的唯一权威来源。
         """
         return None
 
@@ -161,7 +161,7 @@ class StateStore(ABC):
         return []
 
     def save_narrative(self, run_id: str, narrative: dict) -> None:
-        """落盘人读**叙述摘要**（非确定、显式生成、单独留痕，不混入确定性报告）。"""
+        """落盘人读**叙述摘要**（非确定、显式生成、单独记录，不混入确定性报告）。"""
         return None
 
     def load_narrative(self, run_id: str) -> Optional[dict]:
@@ -326,7 +326,7 @@ class SqliteStateStore(StateStore):
     # -- 经验库（学习层闭环）--
 
     def save_lessons(self, run_id: str, report: object) -> None:
-        """落盘一次 run 的学习规则（幂等：同 run 重跑覆盖，不重复计数）。
+        """落盘一次 run 的学习规则（幂等：同 run 重新执行覆盖，不重复计数）。
 
         report：learning.LearningReport（duck-typing，避免 state_store 反向
         依赖学习层）。规则为空则只清空该 run 的旧行，不写入。
@@ -475,7 +475,7 @@ class SqliteStateStore(StateStore):
         ]
 
     def save_narrative(self, run_id: str, narrative: dict) -> None:
-        """落盘叙述摘要（按 run 覆盖；非确定产物，单独留痕）。"""
+        """落盘叙述摘要（按 run 覆盖；非确定产物，单独记录）。"""
         with self._lock:
             self._conn.execute(
                 """

@@ -10,8 +10,8 @@
 CLI 侧调 orchestration.cli.main（**无 mock**，走真实 HTTP 打到本地网关），
 即验证 `ao decompose --submit` / `ao submit` / `ao wait` 全链路。
 
-第二部分验证 #34：agent 挂死（mock latency 30s）而任务声明 timeout=1 →
-框架侧 wall-clock 超时生效，run 不再空转（且不污染后续派发）。
+第二部分验证 #34：agent 无响应（mock latency 30s）而任务声明 timeout=1 →
+框架侧 wall-clock 超时生效，run 不再空耗（且不污染后续派发）。
 
 运行：.venv/bin/python scripts/smoke_decompose.py
 """
@@ -51,7 +51,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def mock_configs() -> list[MockAgentConfig]:
-    """三个工作角色 + 一个"挂死"角色（验证框架侧超时）。"""
+    """三个工作角色 + 一个"无响应"角色（验证框架侧超时）。"""
     return [
         MockAgentConfig(
             agent_id="translator", capabilities=["translation"],
@@ -71,7 +71,7 @@ def mock_configs() -> list[MockAgentConfig]:
         ),
         MockAgentConfig(
             agent_id="sleepy", capabilities=["general"],
-            description="挂死 agent（30s 才返回）", max_concurrency=2,
+            description="无响应 agent（30s 才返回）", max_concurrency=2,
             latency_ms=30_000,
         ),
     ]
@@ -90,7 +90,7 @@ def build_registry(mock_base_url: str) -> AgentRegistry:
 
 
 def run_cli(argv: list[str]) -> int:
-    """在子线程里跑真实 CLI（内部走真实 HTTP 打到本地网关）。"""
+    """在子线程里运行真实 CLI（内部走真实 HTTP 打到本地网关）。"""
     box: dict = {}
     th = threading.Thread(target=lambda: box.setdefault("rc", cli.main(argv)))
     th.start()
@@ -117,7 +117,7 @@ async def main() -> int:
 
     reg = build_registry(f"{server.base_url}/v1")
     # 注意：mock 服务端就在本事件循环里，同步采集必须丢线程——否则阻塞
-    # 事件循环会让服务端无法应答（自问自答死锁）
+    # 事件循环会让服务端无法应答（请求与应答相互等待，形成互锁）
     summary = await asyncio.to_thread(reg.collect)   # 真实 HTTP 能力采集
     assert all(s["ok"] for s in summary), summary
 
@@ -145,7 +145,7 @@ async def main() -> int:
             run_cli, ["-u", GATEWAY, "wait", run_id, "--timeout", "180"]
         )
         elapsed = time.monotonic() - t0
-        check("ao wait 返回 0（拆解后全链跑完）", rc == 0, f"{elapsed:.1f}s")
+        check("ao wait 返回 0（拆解后全链执行完毕）", rc == 0, f"{elapsed:.1f}s")
 
         import urllib.request
 
@@ -162,20 +162,20 @@ async def main() -> int:
         check("final_status 为 success/partial",
               report["final_status"] in ("success", "partial"),
               report["final_status"])
-        check("分配留痕覆盖全部已派发任务",
+        check("分配记录覆盖全部已派发任务",
               len(report["assignments"]) >= 1,
               f"{len(report['assignments'])} 条")
         check("真实 usage 回填（成本 > 0）", report["total_cost"] > 0,
               f"${report['total_cost']}")
-        # 运行中快照 agent 归属（#26 修复项）也顺带确认：终态快照里 agent 非空
+        # 运行中快照 agent 归属（#26 修复项）也同时确认：终态快照里 agent 非空
         check("任务均带 agent 归属",
               all(t["agent"] for t in snap["tasks"]),
               ", ".join(sorted({t["agent"] for t in snap["tasks"]})))
 
         # ---------- 第二部分：#34 框架侧 wall-clock 超时 ----------
-        print("\n[2] 执行层 wall-clock 超时（挂死 agent + timeout=1）")
+        print("\n[2] 执行层 wall-clock 超时（无响应 agent + timeout=1）")
         dag = {"tasks": {"s1": {
-            "id": "s1", "desc": "挂死任务",
+            "id": "s1", "desc": "无响应任务",
             "required_resources": {"model": "sleepy", "timeout": 1},
         }}}
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
@@ -186,12 +186,12 @@ async def main() -> int:
         rc = await asyncio.to_thread(
             run_cli, ["-u", GATEWAY, "submit", dag_path, "--run-id", "timeout-demo"]
         )
-        check("ao submit 挂死任务返回 0", rc == 0, f"rc={rc}")
+        check("ao submit 无响应任务返回 0", rc == 0, f"rc={rc}")
         rc = await asyncio.to_thread(
             run_cli, ["-u", GATEWAY, "wait", "timeout-demo", "--timeout", "60"]
         )
         elapsed = time.monotonic() - t0
-        check("run 在超时内结束（未被挂死任务拖住）", elapsed < 20,
+        check("run 在超时内结束（未被无响应任务阻塞）", elapsed < 20,
               f"{elapsed:.1f}s（声明 timeout=1s，agent 实际 30s 才返回）")
         rep2 = get("/api/runs/timeout-demo/report")
         err = (rep2["task_results"].get("s1") or {}).get("error") or {}

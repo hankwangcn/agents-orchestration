@@ -1,15 +1,15 @@
 """运行存档 + 接入层 Web 页面冒烟（档三：真实 HTTP + 真实 CLI + 真实网关）。
 
-链路（对话共识：归档归持久化底座，过程口径=事件流，人读版=按需渲染）：
+链路（对话共识：归档归持久化底座，过程定义=事件流，人读版=按需渲染）：
 提交带 goal 的 run（mock agents 真实 HTTP 执行，含失败 / 剪枝 / 降级）→
-**过程事件流**逐条落盘（状态变更即写）→ 终态报告归档（治理/学习产物挂回）→
+**过程事件流**逐条落盘（状态变更即写）→ 终态报告归档（治理/学习产物附载回）→
 
 ① 运行枚举：`/api/runs`、`ao runs`（崩溃后 / 换进程后仍可发现已有 run）
 ② 人读投影：`/api/runs/{id}/view`——**确定性、可重放**（同一份存档 → 同一份视图）
 ③ 接入层 Web 页面：`/`（列表）+ `/runs/{id}`（详情：过程时间线 + 任务 + 治理 +
-   学习）——**服务端渲染、同源、零构建、零 CORS**
+   学习）——**服务端渲染、同源、无需构建工具链、无跨域**
 ④ 叙述摘要：`POST /api/runs/{id}/narrative`——LLM 产出、**非确定**、
-   **显式触发**、单独留痕、**绝不默认生成、不混入确定性报告**
+   **显式触发**、单独记录、**绝不默认生成、不混入确定性报告**
 
 运行：.venv/bin/python scripts/smoke_archive.py（无需 API key——全部打到本地 mock 端点）
 """
@@ -73,7 +73,7 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
 
 
 def run_cli(argv: list[str]) -> int:
-    """子线程里跑真实 CLI（内部走真实 HTTP 打到本地网关）。"""
+    """子线程里运行真实 CLI（内部走真实 HTTP 打到本地网关）。"""
     box: dict = {}
     th = threading.Thread(target=lambda: box.setdefault("rc", cli.main(argv)))
     th.start()
@@ -181,7 +181,7 @@ async def main(demo_dir: str | None = None) -> int:
         results.append(check("同一份存档 → 同一份视图（确定性、可重放）",
                              b1 == b2))
 
-        print("\n== 5. 叙述摘要：非确定、显式触发、单独留痕 ==")
+        print("\n== 5. 叙述摘要：非确定、显式触发、单独记录 ==")
         results.append(check("未显式触发时叙述摘要为空（不默认生成）",
                              v["narrative"] is None))
         sn, bn = http_post(f"/api/runs/{run_id}/narrative")
@@ -192,7 +192,7 @@ async def main(demo_dir: str | None = None) -> int:
                              sn == 200 and narr["source"] == "llm"
                              and narr["deterministic"] is False))
         saved = store.load_narrative(run_id)
-        results.append(check("叙述单独留痕（不与确定性报告合并）",
+        results.append(check("叙述单独记录（不与确定性报告合并）",
                              saved is not None and saved["text"] == narr["text"]))
         _, b3 = http_get(f"/api/runs/{run_id}/view")
         results.append(check("叙述并入视图的独立字段（生成后可见）",
@@ -207,10 +207,10 @@ async def main(demo_dir: str | None = None) -> int:
         results.append(check("详情页含过程时间线 / 任务 / 学习规则",
                              sd == 200 and "过程时间线" in bd
                              and "任务与结果" in bd and "学习层规则" in bd))
-        results.append(check("详情页标注唯一真源 = 运行存档",
+        results.append(check("详情页标注唯一权威来源 = 运行存档",
                              "运行存档" in bd and "按需渲染" in bd))
         sm, bm = http_get("/runs/nope")
-        results.append(check("未知 run → 错误页（非裸 JSON）",
+        results.append(check("未知 run → 错误页（非未包装的 JSON）",
                              sm == 404 and "无法打开" in bm))
 
         print("\n== 7. 真实 CLI：ao runs / ao view（走真实 HTTP）==")

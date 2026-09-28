@@ -410,7 +410,7 @@
       <div class="layer-head">
         <span class="layer-badge">学习层</span>
         <span class="layer-en">LEARN</span>
-        <span class="layer-role">复盘 · 沉淀 · 回馈</span>
+        <span class="layer-role">复盘 · 归集 · 回馈</span>
       </div>
       <div class="layer-oneline">确定性复盘 → 证据分级 → 跨运行经验库 → 回馈拆解提示词。</div>
       <div class="layer-body">
@@ -424,7 +424,7 @@
         <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">
           <div class="card-title"><span class="mk"></span>经验库</div>
           <div class="card-fn"><span class="tag">核心功能</span>将规则落盘并聚合为跨运行摘要，作为后续任务的数据基础。</div>
-          <div class="card-desc"><span class="tag">核心逻辑</span>规则落盘为经验库表（同一运行重跑幂等），按规则标识聚合命中次数、贡献运行数、最高严重度与最近证据——单次运行内的阈值统计意义有限，跨运行复现构成客观依据。对外接口为 <span class="path">GET /api/lessons</span> 与 <span class="path">ao lessons</span>。</div>
+          <div class="card-desc"><span class="tag">核心逻辑</span>规则落盘为经验库表（同一运行重新执行幂等），按规则标识聚合命中次数、贡献运行数、最高严重度与最近证据——单次运行内的阈值统计意义有限，跨运行复现构成客观依据。对外接口为 <span class="path">GET /api/lessons</span> 与 <span class="path">ao lessons</span>。</div>
         </div>
 
         <div class="card" style="--cc:#4d7c0f; --lc:#4d7c0f">

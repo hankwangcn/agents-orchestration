@@ -1,17 +1,17 @@
 """agents-orchestration CLI —— 网关的瘦客户端（架构 §3.1 接入层）。
 
-定位：框架作为系统存在，上行是 HTTP API 网关。CLI **不绕过网关直连
-scheduler**——它只是网关的运维 / 人工出口客户端：目标拆解（规划层）、
+定位：框架作为系统存在，上行是 HTTP API 网关。CLI **不跳过网关直连
+scheduler**——它只是网关的运维 / 人工介入入口客户端：目标拆解（规划层）、
 提交 DAG、查进度 / 报告 / 指标、取消、断点恢复、人工 resolve、看 agent 档案。
 
 典型场景：
-- 人工出口刚需：resolve（complete/cancel/retry）与 resume 本就是"人工"
-  操作，curl 手拼 JSON 不友好——`ao resolve` 一步到位；
-- 运维查询：`ao status/report/metrics/agents` 免记 URL；
-- 零代码体验：装完包不用写 Python，`ao submit dag.json` 即提交；
+- 人工介入入口刚需：resolve（complete/cancel/retry）与 resume 本就是"人工"
+  操作，curl 手拼 JSON 不友好——`ao resolve` 一次完成；
+- 运维查询：`ao status/report/metrics/agents` 无需记忆 URL；
+- 无需编写代码：安装后不必编写 Python，`ao submit dag.json` 直接提交；
 - 交互模式：`ao`（无子命令）进入 REPL shell——逐行执行全部子命令，
   命令错误不退出会话，run_id 会话记忆（submit 后 status/report 等
-  免重复敲 run_id），`submit` 不带文件时引导式提问生成 DAG，
+  无需重复输入 run_id），`submit` 不带文件时引导式提问生成 DAG，
   `resolve` 缺参数时逐项引导，tab 补全 + 历史持久化（~/.ao_history）。
 
 依赖：仅标准库 urllib（网关是 FastAPI JSON 接口，无需额外 HTTP 客户端）。
@@ -38,7 +38,7 @@ _session: dict = {"run_id": None, "url": None}
 
 
 class CliError(Exception):
-    """CLI 业务错误：打印消息后退出（不打印堆栈）。"""
+    """CLI 业务错误：打印消息后退出（不打印调用栈）。"""
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ def _table(headers: list[str], rows: list[list[str]]) -> str:
 # ---------------------------------------------------------------------------
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    """启动 API 网关（框架作为系统的对外门）。"""
+    """启动 API 网关（框架作为系统的唯一对外入口）。"""
     try:
         import uvicorn
     except ImportError:
@@ -164,7 +164,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
             narrator = make_default_narrator(model=args.decompose_model)
             print("[serve] 叙述摘要已启用（POST /api/runs/{id}/narrative "
-                  "显式触发；非确定、单独留痕）")
+                  "显式触发；非确定、单独记录）")
         except (ValueError, ImportError) as e:
             print(f"[serve] 未启用叙述摘要：{e}")
     app, _ = create_app(
@@ -173,7 +173,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     )
     if store:
         print(f"[serve] 断点持久化已启用：{args.state_store}"
-              f"（resume / resolve 人工出口可用）")
+              f"（resume / resolve 人工介入入口可用）")
     print(f"[serve] 网关已启动：http://{args.host}:{args.port}")
     print("[serve] 查看 agent：ao agents | 拆解目标：ao decompose --goal '...' | "
           "提交：ao submit dag.json")
@@ -320,7 +320,7 @@ def cmd_report(args: argparse.Namespace) -> int:
                      err])
     print(_table(["task", "result", "output", "error_code"], rows))
     if resp["assignments"]:
-        print("\n分配留痕：")
+        print("\n分配记录：")
         rows = [[a["task_id"], a["agent_id"], a["match_type"],
                  "RISK" if a["risk"] else "", a["reason"]] for a in resp["assignments"]]
         print(_table(["task", "agent", "match", "risk", "reason"], rows))
@@ -402,7 +402,7 @@ def cmd_lessons(args: argparse.Namespace) -> int:
           f"{resp['runs_considered']} 次运行")
     lessons = resp["lessons"]
     if not lessons:
-        print("（暂无——跑过带 state_store 的 run 后自动累积）")
+        print("（暂无——执行过带 state_store 的 run 后自动累积）")
         return 0
     rows = [
         [ls["rule_id"], ls["severity"],
@@ -462,7 +462,7 @@ def cmd_view(args: argparse.Namespace) -> int:
 
 
 def cmd_narrate(args: argparse.Namespace) -> int:
-    """显式生成叙述摘要（LLM，非确定；单独留痕，不默认生成）。"""
+    """显式生成叙述摘要（LLM，非确定；单独记录，不默认生成）。"""
     run_id = _require_run_id(args)
     resp = _request("POST", _api(args.url, f"/api/runs/{run_id}/narrative"), {})
     print(f"叙述摘要（非确定来源 · LLM 生成 · model={resp.get('model', '')}"
@@ -736,7 +736,7 @@ def _repl(url: str | None = None) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="ao",
-        description="agents-orchestration 网关客户端（提交 DAG / 查询 / 人工出口）",
+        description="agents-orchestration 网关客户端（提交 DAG / 查询 / 人工介入入口）",
     )
     p.add_argument("-u", "--url", default=DEFAULT_GATEWAY,
                    help=f"网关地址（默认 {DEFAULT_GATEWAY}，或环境变量 AO_GATEWAY）")

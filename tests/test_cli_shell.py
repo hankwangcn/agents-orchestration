@@ -46,7 +46,7 @@ def _dispatch(fake_requests):
 
 class TestReplSession:
     def test_no_args_enters_repl_with_run_id_memory(self, tmp_path, capsys):
-        """submit 后 status 免 run_id——会话记忆生效。"""
+        """submit 后 status 无需 run_id——会话记忆生效。"""
         dag = tmp_path / "dag.json"
         dag.write_text('{"tasks": {"t1": {"desc": "t1"}}}', encoding="utf-8")
         requests = {
@@ -70,7 +70,7 @@ class TestReplSession:
         assert "交互 shell" in capsys.readouterr().out
 
     def test_error_does_not_exit_session(self, capsys):
-        """无 run_id 报错后会话继续，下一条命令正常执行。"""
+        """无 run_id 打印错误信息后会话继续，下一条命令正常执行。"""
         inputs = ["status", "status r1", "exit"]
         with mock.patch("builtins.input", side_effect=inputs), \
              mock.patch("orchestration.cli._request",
@@ -92,7 +92,7 @@ class TestReplSession:
         assert "done" in capsys.readouterr().out
 
     def test_non_cli_error_does_not_exit_session(self, capsys):
-        """命令实现抛出任意异常（如文件不存在）→ 报错但会话继续。
+        """命令实现抛出任意异常（如文件不存在）→ 打印错误信息但会话继续。
 
         回归（P2）：_repl 此前只捕获 CliError/KeyboardInterrupt，
         cmd_submit 的 open() 抛 FileNotFoundError 会穿透循环整场退出
@@ -255,7 +255,7 @@ class TestInteractiveResolve:
 
 
 class TestNonInteractiveGuard:
-    """非终端命令行：缺 run_id 给友好错误，不静默挂起。"""
+    """非终端命令行：缺 run_id 给友好错误，不静默停滞。"""
 
     def test_status_without_run_id(self, capsys):
         with mock.patch("orchestration.cli._request") as req:

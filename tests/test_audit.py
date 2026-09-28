@@ -26,7 +26,7 @@ from test_scheduler import ScriptedAdapter, dag_of, fail, ok
 # ---------------------------------------------------------------------------
 
 def run_report(dag: DAG, script: dict, retries=2, **reg_kwargs) -> ScheduleReport:
-    """跑一次调度拿报告（复用 test_scheduler 的适配器）。"""
+    """执行一次调度并获取报告（复用 test_scheduler 的适配器）。"""
     adapter = ScriptedAdapter(script)
     reg = AgentRegistry(**reg_kwargs)
     reg.register(adapter)
@@ -83,7 +83,7 @@ class TestReconciliation:
         assert audit.status_result_mismatches[0]["task_id"] == "a"
 
     def test_missing_result_is_critical(self):
-        """SUCCESS 终态但缺 result → 断链，critical。"""
+        """SUCCESS 终态但缺 result → 链路中断，critical。"""
         dag = dag_of(("a", []))
         dag.tasks["a"].status = TaskStatus.SUCCESS
         report = ScheduleReport(dag=dag)
@@ -105,7 +105,7 @@ class TestReconciliation:
 
 
 # ---------------------------------------------------------------------------
-# 分配审计（阶段三留痕消费）
+# 分配审计（阶段三记录消费）
 # ---------------------------------------------------------------------------
 
 class TestAssignmentAudit:
