@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agents Orchestration — Architecture Overview</title>
+<style>
+  :root{
+    --ink:#0f172a; --ink2:#334155; --ink3:#64748b; --ink4:#94a3b8;
+    --line:#e2e8f0; --bg:#f1f5f9; --card:#ffffff;
+    --access:#0284c7; --plan:#6d28d9; --schedule:#0f766e; --execute:#b45309;
+    --govern:#be185d; --learn:#4d7c0f; --store:#475569;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--ink); padding:28px 20px 40px;
+  }
+  .wrap{max-width:1150px; margin:0 auto;}
+
+  /* ---------- Header ---------- */
+  header{
+    background:linear-gradient(135deg,#0f172a 0%,#1e293b 60%,#312e81 130%);
+    color:#fff; border-radius:16px; padding:24px 28px; margin-bottom:20px;
+    display:flex; justify-content:space-between; align-items:center; gap:24px; flex-wrap:wrap;
+    box-shadow:0 10px 30px rgba(15,23,42,.18);
+  }
+  .title-row{display:flex; align-items:center; gap:16px;}
+  .logo{
+    width:54px; height:54px; border-radius:14px; flex:0 0 auto;
+    background:linear-gradient(135deg,#0ea5e9,#6366f1);
+    display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size:19px; letter-spacing:.5px; color:#fff;
+    box-shadow:0 6px 16px rgba(14,165,233,.35);
+  }
+  h1{font-size:21px; font-weight:700; letter-spacing:.2px;}
+  header p{color:#cbd5e1; font-size:12.5px; margin-top:5px; line-height:1.6; max-width:620px;}
+  .legend{display:flex; flex-direction:column; gap:7px; font-size:11.5px;}
+  .legend .row{display:flex; align-items:center; gap:13px; flex-wrap:wrap;}
+  .lg{display:inline-flex; align-items:center; gap:6px; white-space:nowrap; color:#e2e8f0;}
+  .dot{width:10px; height:10px; border-radius:3px; display:inline-block;}
+  .arrow-svg{width:16px; height:8px;}
+  .dash-svg{width:20px; height:8px;}
+
+  /* ---------- Layout: main column + feedback column ---------- */
+  main{display:flex; align-items:stretch;}
+  .col-main{flex:1 1 auto; min-width:0;}
+  .col-fb{
+    flex:0 0 74px; margin-left:18px; position:relative; display:flex;
+    flex-direction:column; align-items:center; border-left:1px dashed var(--ink4);
+  }
+  .fb-svg{width:40px; flex:1 1 auto; min-height:120px;}
+  .fb-tag{
+    writing-mode:vertical-rl; letter-spacing:3px; font-size:11px; color:#7c3aed;
+    font-weight:600; margin:4px 0; white-space:nowrap;
+  }
+  .fb-sub{
+    writing-mode:vertical-rl; letter-spacing:.5px; font-size:10px; color:var(--ink4);
+    margin-bottom:8px; white-space:nowrap;
+  }
+
+  /* ---------- Layer band ---------- */
+  .layer{
+    background:var(--card); border:1px solid var(--line); border-left:5px solid var(--lc);
+    border-radius:14px; padding:14px 18px 15px; box-shadow:0 1px 3px rgba(15,23,42,.05);
+  }
+  .layer-head{display:flex; align-items:baseline; gap:9px; margin-bottom:7px; flex-wrap:wrap;}
+  .layer-idx{font-size:11px; font-weight:700; color:var(--lc); opacity:.7; letter-spacing:1px;}
+  .layer-en{font-size:15px; font-weight:700; color:var(--lc); letter-spacing:2px;}
+  .layer-role{
+    font-size:10.5px; font-weight:600; color:var(--lc); border:1px solid currentColor;
+    border-radius:999px; padding:1px 9px; margin-left:auto; opacity:.85; white-space:nowrap;
+  }
+  .layer-fn{
+    font-size:13px; font-weight:500; color:var(--ink2); line-height:1.6;
+    padding-left:11px; border-left:3px solid var(--lc);
+  }
+  .mods{display:flex; flex-wrap:wrap; gap:7px; margin-top:11px;}
+  .mod{
+    font-size:11.5px; font-weight:600; color:var(--ink2);
+    background:#f6f9fc; border:1px solid var(--line); border-radius:7px;
+    padding:3px 9px; display:inline-flex; align-items:center; gap:6px;
+  }
+  .mod i{width:7px; height:7px; border-radius:2px; background:var(--lc); display:inline-block; flex:0 0 auto;}
+
+  /* ---------- Persistence base ---------- */
+  .base{
+    background:#fbfcfe; border:1px solid var(--line); border-top:5px solid var(--store);
+    border-radius:14px; padding:14px 18px 15px; box-shadow:0 1px 3px rgba(15,23,42,.05);
+  }
+  .base .layer-en, .base .layer-idx, .base .layer-role{color:var(--store);}
+  .base .layer-fn{border-left-color:var(--store);}
+  .base .mod i{background:var(--store);}
+
+  /* ---------- Inter-layer flow ---------- */
+  .flow{display:flex; align-items:center; gap:12px; padding:6px 0 7px; min-height:44px;}
+  .flow-rail{flex:0 0 auto; width:24px; align-self:stretch; position:relative;}
+  .flow-rail svg{position:absolute; inset:0; width:100%; height:100%;}
+  .fl{stroke:var(--ink3); stroke-width:1.8; fill:none;}
+  .flow-tag{display:flex; flex-direction:column; gap:1px;}
+  .ft-main{font-size:12px; font-weight:600; color:var(--ink);}
+  .ft-sub{font-size:10.5px; color:var(--ink4);}
+
+  footer{margin-top:22px; text-align:center; font-size:11px; color:var(--ink4); line-height:1.7;}
+  footer b{color:var(--ink3); font-weight:600;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="title-row">
+    <div class="logo">AO</div>
+    <div>
+      <h1>Agents Orchestration — Architecture Overview</h1>
+      <p>Result-driven orchestration. The framework schedules tasks and collects result contracts only; it does not observe agent internals. Six functional layers over a shared persistence base.</p>
+    </div>
+  </div>
+  <div class="legend">
+    <div class="row">
+      <span class="lg"><i class="dot" style="background:#0284c7"></i>Access</span>
+      <span class="lg"><i class="dot" style="background:#6d28d9"></i>Plan</span>
+      <span class="lg"><i class="dot" style="background:#0f766e"></i>Schedule</span>
+      <span class="lg"><i class="dot" style="background:#b45309"></i>Execute</span>
+    </div>
+    <div class="row">
+      <span class="lg"><i class="dot" style="background:#be185d"></i>Govern</span>
+      <span class="lg"><i class="dot" style="background:#4d7c0f"></i>Learn</span>
+      <span class="lg"><i class="dot" style="background:#475569"></i>Persistence Base</span>
+    </div>
+    <div class="row">
+      <span class="lg">
+        <svg class="arrow-svg" viewBox="0 0 16 8"><path d="M0 4 H11 M9 1 L13 4 L9 7" stroke="#475569" stroke-width="1.6" fill="none"/></svg>
+        Main data flow
+      </span>
+      <span class="lg">
+        <svg class="dash-svg" viewBox="0 0 20 8"><path d="M0 4 H13 M11 1 L15 4 L11 7" stroke="#7c3aed" stroke-width="1.6" stroke-dasharray="3 2" fill="none"/></svg>
+        Learning feedback loop
+      </span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="col-main">
+
+    <!-- ================= ACCESS ================= -->
+    <section class="layer" style="--lc:#0284c7">
+      <div class="layer-head">
+        <span class="layer-idx">01</span>
+        <span class="layer-en">ACCESS</span>
+        <span class="layer-role">System boundary</span>
+      </div>
+      <div class="layer-fn">Every external entry point of the framework: goal submission and task-graph submission, run control and recovery, progress and reports, and review of the complete execution process.</div>
+      <div class="mods">
+        <span class="mod"><i></i>API Gateway</span>
+        <span class="mod"><i></i>CLI client</span>
+        <span class="mod"><i></i>Web pages</span>
+        <span class="mod"><i></i>Embeddable library API</span>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 24 44" preserveAspectRatio="none">
+          <line x1="12" y1="0" x2="12" y2="34" class="fl"/>
+          <path d="M6 33 L12 42 L18 33" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">Goal &nbsp;→&nbsp; task graph</span>
+        <span class="ft-sub">A free-text goal is decomposed; an existing task graph is submitted directly</span>
+      </div>
+    </div>
+
+    <!-- ================= PLAN ================= -->
+    <section class="layer" style="--lc:#6d28d9">
+      <div class="layer-head">
+        <span class="layer-idx">02</span>
+        <span class="layer-en">PLAN</span>
+        <span class="layer-role">Goal → task graph</span>
+      </div>
+      <div class="layer-fn">Turn a natural-language goal into an executable, parallelizable, auditable task graph; derive the graph's structural analysis and the agent resource profile.</div>
+      <div class="mods">
+        <span class="mod"><i></i>Task Decomposer</span>
+        <span class="mod"><i></i>Dependency Analysis</span>
+        <span class="mod"><i></i>Resource Collector</span>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 24 44" preserveAspectRatio="none">
+          <line x1="12" y1="0" x2="12" y2="34" class="fl"/>
+          <path d="M6 33 L12 42 L18 33" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">Task graph + capability requirements</span>
+        <span class="ft-sub">Allocation is driven by the resource profile</span>
+      </div>
+    </div>
+
+    <!-- ================= SCHEDULE ================= -->
+    <section class="layer" style="--lc:#0f766e">
+      <div class="layer-head">
+        <span class="layer-idx">03</span>
+        <span class="layer-en">SCHEDULE</span>
+        <span class="layer-role">Allocate · dispatch · converge</span>
+      </div>
+      <div class="layer-fn">Select an agent instance per task, advance the graph in topological order under the declared resource limits, and converge failures through retry, propagation, pruning, and cancellation.</div>
+      <div class="mods">
+        <span class="mod"><i></i>Resource Allocator</span>
+        <span class="mod"><i></i>DAG Scheduler (sync / async)</span>
+        <span class="mod"><i></i>Failure Handling</span>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 24 44" preserveAspectRatio="none">
+          <line x1="12" y1="0" x2="12" y2="34" class="fl"/>
+          <path d="M6 33 L12 42 L18 33" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">Dispatch task_request / info_request</span>
+        <span class="ft-sub">Protocol template + request JSON + upstream input</span>
+      </div>
+    </div>
+
+    <!-- ================= EXECUTE ================= -->
+    <section class="layer" style="--lc:#b45309">
+      <div class="layer-head">
+        <span class="layer-idx">04</span>
+        <span class="layer-en">EXECUTE</span>
+        <span class="layer-role">Protocol assembly · parsing</span>
+      </div>
+      <div class="layer-fn">Assemble the protocol prompt, invoke the model, and parse the response into a valid result contract. All stability risk — format drift, malformed JSON — is absorbed here, so agents need no adaptation.</div>
+      <div class="mods">
+        <span class="mod"><i></i>Agent Adapter</span>
+        <span class="mod"><i></i>External Agent</span>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 24 44" preserveAspectRatio="none">
+          <line x1="12" y1="0" x2="12" y2="34" class="fl"/>
+          <path d="M6 33 L12 42 L18 33" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">Result contract</span>
+        <span class="ft-sub">Reconciled by request identifier; late results of cancelled tasks are discarded</span>
+      </div>
+    </div>
+
+    <!-- ================= GOVERN ================= -->
+    <section class="layer" style="--lc:#be185d">
+      <div class="layer-head">
+        <span class="layer-idx">05</span>
+        <span class="layer-en">GOVERN</span>
+        <span class="layer-role">Audit · judge · account</span>
+      </div>
+      <div class="layer-fn">Verify every result contract against the scheduling facts through a deterministic, replayable audit; judge goal attainment against the original goal (advisory); account cost, tokens, and metrics.</div>
+      <div class="mods">
+        <span class="mod"><i></i>Result Auditor</span>
+        <span class="mod"><i></i>Reflection / Judge</span>
+        <span class="mod"><i></i>Cost Accounting</span>
+        <span class="mod"><i></i>Observability</span>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 24 44" preserveAspectRatio="none">
+          <line x1="12" y1="0" x2="12" y2="34" class="fl"/>
+          <path d="M6 33 L12 42 L18 33" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">Governance findings attached to the run archive</span>
+        <span class="ft-sub">Audit reconciliation · cost · pruning evidence · goal attainment (advisory)</span>
+      </div>
+    </div>
+
+    <!-- ================= LEARN ================= -->
+    <section class="layer" style="--lc:#4d7c0f">
+      <div class="layer-head">
+        <span class="layer-idx">06</span>
+        <span class="layer-en">LEARN</span>
+        <span class="layer-role">Review · accumulate · feed back</span>
+      </div>
+      <div class="layer-fn">Perform a read-only review at run finalization, classify findings by evidence strength, persist them into a cross-run lesson base, and feed the qualifying lessons back into the decomposition prompt.</div>
+      <div class="mods">
+        <span class="mod"><i></i>Review &amp; Rule Extraction</span>
+        <span class="mod"><i></i>Lesson Base (cross-run)</span>
+        <span class="mod"><i></i>Prompt Advisor</span>
+      </div>
+    </section>
+
+    <div class="flow">
+      <div class="flow-rail">
+        <svg viewBox="0 0 24 44" preserveAspectRatio="none">
+          <line x1="12" y1="0" x2="12" y2="34" class="fl"/>
+          <path d="M6 33 L12 42 L18 33" class="fl"/>
+        </svg>
+      </div>
+      <div class="flow-tag">
+        <span class="ft-main">Run archive persisted</span>
+        <span class="ft-sub">Process event stream + terminal report (governance and learning findings attached)</span>
+      </div>
+    </div>
+
+    <!-- ================= PERSISTENCE BASE ================= -->
+    <section class="base">
+      <div class="layer-head">
+        <span class="layer-idx">BASE</span>
+        <span class="layer-en">PERSISTENCE</span>
+        <span class="layer-role">Cross-layer foundation</span>
+      </div>
+      <div class="layer-fn">Record the framework-side scheduling state as an event stream and the terminal report as an immutable run archive, enabling crash recovery, replay, and review.</div>
+      <div class="mods">
+        <span class="mod"><i></i>State Store</span>
+        <span class="mod"><i></i>Run Archive (event stream + terminal report)</span>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- ================= Learning feedback loop ================= -->
+  <div class="col-fb">
+    <div class="fb-tag">LEARNING FEEDBACK LOOP</div>
+    <div class="fb-sub">cross-run lessons → guidance block injected into the Plan layer</div>
+    <svg class="fb-svg" viewBox="0 0 40 400" preserveAspectRatio="none">
+      <line x1="20" y1="26" x2="20" y2="356" stroke="#7c3aed" stroke-width="2.2" stroke-dasharray="7 5"/>
+      <path d="M20 30 L14 46 M20 30 L26 46" stroke="#7c3aed" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+      <path d="M20 352 L14 336 M20 352 L26 336" stroke="#7c3aed" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+      <circle cx="20" cy="24" r="3.6" fill="#7c3aed"/>
+      <circle cx="20" cy="358" r="3.6" fill="#7c3aed"/>
+    </svg>
+  </div>
+</main>
+
+<footer>
+  <b>Agents Orchestration</b> · English architecture overview · 6 functional layers / 20 modules over a shared persistence base<br>
+  Source of record: hankwangcn/agents-orchestration
+</footer>
+
+</div>
+</body>
+</html>
